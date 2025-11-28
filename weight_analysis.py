@@ -18,8 +18,8 @@ def standard_data(model:HookedTransformer):
 def topk_token_data(logits:torch.Tensor, k=16):
     topk = torch.topk(logits, k, largest=True)
     bottomk = torch.topk(logits, k, largest=False)
-    return {
-        "topkVals": rearrange(topk.values, 'k -> 1 1 k 1').tolist(),#officially dimensions are samples, k, layers, neurons
+    return {#officially dimensions are samples, k, layers, neurons
+        "topkVals": rearrange(topk.values, 'k -> 1 1 k 1').tolist(),
         "topkIdxs": rearrange(topk.indices, 'k -> 1 1 k 1').tolist(),
         "bottomkVals": rearrange(bottomk.values, 'k -> 1 1 k 1').tolist(),
         "bottomkIdxs": rearrange(bottomk.indices, 'k -> 1 1 k 1').tolist(),

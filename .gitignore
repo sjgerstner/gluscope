@@ -7,10 +7,12 @@ results/7B_new
 results/7B_new/activation_cache
 results/OLMo-1B-hf_dolma-small
 results/test
+results/OLMo-7B-0424
 #website/test
 docs/test
 testing-react
 .vscode
+adapt_json.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

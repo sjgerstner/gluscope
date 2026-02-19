@@ -10,6 +10,7 @@ from argparse import ArgumentParser
 import json
 import os
 import pickle
+import random
 from tqdm import tqdm
 
 import torch
@@ -159,11 +160,20 @@ def _update_out_dict(out_dict, intermediate):
             #hence the above line of code
     return out_dict
 
+def _update_sample(sample:dict[str,list], sampled_positions:list, sampled_activations:dict[str,torch.Tensor]):
+    sample["sampled_positions"].extend(sampled_positions)
+    for key,value in sampled_activations.items():
+        sample[key].append(value)
+    return sample
 
-def _get_all_neuron_acts(model, ids_and_mask, names_filter, max_seq_len=1024, experiments:list[str]=EXPERIMENTS):
+def _get_all_neuron_acts(
+    model, ids_and_mask, names_filter, max_seq_len=1024,
+    experiments:list[str]=EXPERIMENTS,
+    sampled_positions:torch.Tensor|None=None,
+):
     #https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Interactive_Neuroscope.ipynb
 
-    intermediate:dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
+    intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
 
     batch_size = len(ids_and_mask['input_ids'])
     seq_len = max(len(ids) for ids in ids_and_mask['input_ids'])
@@ -181,6 +191,7 @@ def _get_all_neuron_acts(model, ids_and_mask, names_filter, max_seq_len=1024, ex
     mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1 1').cpu()
     #batch pos neuron
     cache={}
+    sampled_activations = {}
     for key_to_summarise in HOOKS_TO_CACHE:
         # print(key_to_summarise)
         # print(raw_cache[f'blocks.0.{key_to_summarise}'].shape)
@@ -194,6 +205,9 @@ def _get_all_neuron_acts(model, ids_and_mask, names_filter, max_seq_len=1024, ex
         # print(cache[key_to_summarise].shape)
         cache[key_to_summarise] *= mask
         #cache[key_to_summarise] = cache[key_to_summarise].cpu()
+        if sampled_positions is not None:
+            assert "sample" in experiments
+            sampled_activations[key_to_summarise] = (cache[key_to_summarise][torch.arange(batch_size), sampled_positions, :,:]).cpu()
     del raw_cache
 
     #ln_cache: initialise with zeros (batch pos layer d_model)
@@ -222,10 +236,10 @@ def _get_all_neuron_acts(model, ids_and_mask, names_filter, max_seq_len=1024, ex
                 reductions=reductions,
             )
         del zero_one
-    return intermediate
+    return intermediate, sampled_activations
 
 def get_all_neuron_acts_on_dataset(
-    args, model, dataset, path=None
+    args, model, dataset:datasets.Dataset, path=None
 ):
     """Get all neuron activations on dataset.
 
@@ -246,20 +260,12 @@ def get_all_neuron_acts_on_dataset(
     if path is None:
         path = '.'
 
-    # collator = DataCollatorWithPadding(
-    #     tokenizer=None,          # we don’t need a tokenizer because the fields are already ints
-    #     padding=True,            # pad to the longest sequence in the batch
-    #     max_length=None,         # you can set a hard max_length if you wish
-    #     pad_to_multiple_of=None, # optional, useful for certain hardware constraints
-    # )
     batched_dataset = dataset.batch(
         batch_size=args.batch_size,
         drop_last_batch=False
         ) #preserves order
-    # batched_dataset = DataLoader(
-    #     dataset, batch_size=args.batch_size, shuffle=False, drop_last=False,
-    #     collate_fn=collator,
-    # )#preserves order
+    #each row is one batch, represented as a dict[str, list[Tensor]],
+    #where the str is 'input_ids' or 'attention_mask' and the list has args.batch_size elements.
 
     names_filter = [
         f"blocks.{layer}.{hook}"
@@ -278,35 +284,52 @@ def get_all_neuron_acts_on_dataset(
     if not args.no_cache and not batch_size_unchanged:
         with open(f'{path}/activation_cache/batch_size.txt', 'w', encoding='utf-8') as f:
             f.write(str(args.batch_size))
+    sample = {"sampled_positions":[]}
+    for key_to_summarise in HOOKS_TO_CACHE:
+        sample[key_to_summarise] = []
+    random.seed(43)
+    torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
-        # if i==0:
-        #     print(batch)
+        if "sample" in args.experiments:
+            sampled_positions = [random.randrange(seq.shape.item()) for seq in batch['input_ids']]
+        else:
+            batch_file = f"{path}/activation_cache/batch{i}"
+            if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
+                intermediate = torch.load(f"{batch_file}.pt")
+                continue
+            if batch_size_unchanged and os.path.exists(f"{batch_file}.pickle"):
+                with open(f"{batch_file}.pickle", 'rb') as f:
+                    intermediate = utils._move_to(pickle.load(f), device='cuda')
+                continue
+            sampled_positions=[]
         batch = {
             'input_ids': pad_sequence(
                 batch['input_ids'],
                 padding_value=model.tokenizer.pad_token_type_id,
                 batch_first=True,
-            ),
+            ), #tensor of shape batch x pos
             'attention_mask': pad_sequence(
                 batch['attention_mask'],
                 batch_first=True,
             )
         }
-        batch_file = f"{path}/activation_cache/batch{i}"
-        if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
-            intermediate = torch.load(f"{batch_file}.pt")
-        elif batch_size_unchanged and os.path.exists(f"{batch_file}.pickle"):
-            with open(f"{batch_file}.pickle", 'rb') as f:
-                intermediate = utils._move_to(pickle.load(f), device='cuda')
-        else:
-            intermediate = _get_all_neuron_acts(model, batch, names_filter, dataset.max_seq_len, experiments=args.experiments)
-            if args.store_cache:
-                torch.save(intermediate, f"{batch_file}.pt")
+        intermediate, sampled_activations = _get_all_neuron_acts(
+            model, batch, names_filter, max_seq_len=dataset.max_seq_len,
+            experiments=args.experiments,
+            sampled_positions=torch.tensor(sampled_positions),
+        )
+        if args.store_cache:
+            torch.save(intermediate, f"{batch_file}.pt")
         del intermediate['ln_cache']
+        sample = _update_sample(sample, sampled_positions=sampled_positions, sampled_activations=sampled_activations)
         if i==0:
             out_dict = _init_out_dict(intermediate)
         else:
             out_dict = _update_out_dict(out_dict=out_dict, intermediate=intermediate)
+    if "sample" in args.experiments:
+        for key,value in sample.items():
+            if key!="sampled_positions":
+                sample[key] = torch.stack(value)
     for key in out_dict:
         if key[-1] in ('sum', 'freq'):
             out_dict[key] = out_dict[key].to(torch.float)
@@ -319,7 +342,7 @@ def get_all_neuron_acts_on_dataset(
         if key[-1]=='freq':
             out_dict[key] /= float(dataset.n_tokens)
 
-    return out_dict
+    return out_dict, sample
 
 if __name__=="__main__":
     parser = ArgumentParser()
@@ -375,13 +398,15 @@ if __name__=="__main__":
     # )
 
     print('computing activations...')
-    SUMMARY_FILE = f'{SAVE_PATH}/summary{"_refactored" if args.refactor_glu else""}'
+    REFACTOR_STR = "_refactored" if args.refactor_glu else""
+    SUMMARY_FILE = f'{SAVE_PATH}/summary{REFACTOR_STR}'
     if not os.path.exists(f'{SUMMARY_FILE}.pickle') and not os.path.exists(f'{SUMMARY_FILE}.pt'):
-        out_dict = get_all_neuron_acts_on_dataset(
+        out_dict, sample = get_all_neuron_acts_on_dataset(
             args=args,
             model=model,
             dataset=dataset,
             path=SAVE_PATH,
         )
         torch.save(out_dict, f'{SUMMARY_FILE}.pt')
+        torch.save(sample, f"{SAVE_PATH}/sample{REFACTOR_STR}.pt")
     print('done!')

@@ -48,17 +48,19 @@ def _get_reduce_and_arg(cache_item, reduction, k=1, to_device='cpu')-> dict[str,
             )
     return vi_dict
 
-def _get_reduce(cache_item, reduction, arg=False, k=1, use_cuda=True, to_device='cpu')->dict[str,torch.Tensor]|torch.Tensor:
+def _get_reduce(
+    cache_item, reduction, arg=False, use_cuda=True, **kwargs,
+)->dict[str,torch.Tensor]|torch.Tensor:
     if use_cuda and torch.cuda.is_available():
         cache_item = cache_item.cuda()
 
     if arg:
-        return _get_reduce_and_arg(cache_item, reduction, k=k, to_device=to_device)
+        return _get_reduce_and_arg(cache_item, reduction, **kwargs)
     return einops.reduce(
             cache_item,
             '... layer neuron -> layer neuron',
             reduction
-            ).to(to_device)
+            ).to(kwargs["to_device"])
 
 def _compute_reductions_on_single_batch(
     cache,
@@ -95,41 +97,44 @@ def _compute_reductions_on_single_batch(
     return intermediate
 
 def _init_out_dict(intermediate):
-    out_dict={}
+    initial_dict={}
     for key,value in intermediate.items():
         if key[-1] in ['sum', 'freq']:
-            out_dict[key]=value
+            initial_dict[key]=value
         elif key[-1] in ['max', 'min']:
-            out_dict[key] = {
+            initial_dict[key] = {
                 'values':value['values'],
                 'indices':torch.stack([
                     torch.full((model.cfg.n_layers,model.cfg.d_mlp), counter)
                     for counter in range(args.batch_size)
                 ])
             }
-    return out_dict
+    return initial_dict
 
-def _update_out_dict(out_dict, intermediate):
-    for key,value in out_dict.items():
+def _update_out_dict(args, dict_to_update, update_values, i):
+    for key,value in dict_to_update.items():
         if key[-1] in ['sum', 'freq']:
-            out_dict[key] = _get_reduce(
-                torch.stack([value, intermediate[key]]),
+            dict_to_update[key] = _get_reduce(
+                torch.stack([value, update_values[key]]),
                 'sum'
                 )#batch layer neuron -> layer neuron
         elif key[-1] in ['max', 'min']:
             #print(key)
-            out_dict[key] = {
+            dict_to_update[key] = {
                 'values': torch.cat(
                     [
                         value['values'],
-                        intermediate[key]['values']
+                        update_values[key]['values']
                         ]
                     ),
                 'indices':torch.cat(
                     [
                         value['indices'],
                         torch.stack([
-                                torch.full((model.cfg.n_layers,model.cfg.d_mlp), i*args.batch_size+counter)
+                                torch.full(
+                                    (model.cfg.n_layers,model.cfg.d_mlp),
+                                    i*args.batch_size+counter
+                                )
                                 for counter in range(args.batch_size)
                             ])
                         ]
@@ -140,50 +145,42 @@ def _update_out_dict(out_dict, intermediate):
             #running topk computation
             #print(out_dict[key]['values'].shape) #should be: k layer neuron
             vi = _get_reduce(
-                out_dict[key]['values'] * utils.RELEVANT_SIGNS[key[0]][key[1]],
+                dict_to_update[key]['values'] * utils.RELEVANT_SIGNS[key[0]][key[1]],
                 reduction=key[-1],
                 arg=True,
-                k=min(out_dict[key]['values'].shape[0], args.examples_per_neuron),
+                k=min(dict_to_update[key]['values'].shape[0], args.examples_per_neuron),
                 )#k+1 layer neuron -> k layer neuron
             # print(vi['indices'][:,:2,:2])
             # if args.test:
             #     print(out_dict[key]['indices'].shape)
             #     print(vi['indices'].shape)
-            out_dict[key]['values'] = vi['values'] * utils.RELEVANT_SIGNS[key[0]][key[1]]
-            out_dict[key]['indices'] = torch.gather(
-                out_dict[key]['indices'], dim=0, index=vi['indices']
+            dict_to_update[key]['values'] = vi['values'] * utils.RELEVANT_SIGNS[key[0]][key[1]]
+            dict_to_update[key]['indices'] = torch.gather(
+                dict_to_update[key]['indices'], dim=0, index=vi['indices']
             )
             #original dataset indices!
             #I want:
             #new_out_dict[key]['indices'][i,layer,neuron] =
             # out_dict[key]['indices'][vi['indices'][i,layer,neuron],layer,neuron]
             #hence the above line of code
-    return out_dict
+    return dict_to_update
 
-def _update_sample(sample:dict[str,list], sampled_positions:list, sampled_activations:dict[str,torch.Tensor]):
-    sample["sampled_positions"].extend(sampled_positions)
-    for key,value in sampled_activations.items():
-        sample[key].append(value)
-    return sample
-
-def _get_all_neuron_acts(
-    model, ids_and_mask, names_filter, max_seq_len=1024,
-    experiments:list[str]=EXPERIMENTS,
-    sampled_positions:torch.Tensor|None=None,
+def _update_sample(
+    sample_to_update:dict[str,list],
+    sampled_positions:list, sampled_activations:dict[str,torch.Tensor]
 ):
-    #https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Interactive_Neuroscope.ipynb
+    sample_to_update["sampled_positions"].extend(sampled_positions)
+    for key,value in sampled_activations.items():
+        sample_to_update[key].append(value)
+    return sample_to_update
 
-    intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
-
-    batch_size = len(ids_and_mask['input_ids'])
-    seq_len = max(len(ids) for ids in ids_and_mask['input_ids'])
-
+def _precompute_neuron_acts(model, ids_and_mask, batch_size, names_filter, sampled_positions):
     raw_cache = model.run_with_cache(
         ids_and_mask['input_ids'],
         attention_mask=ids_and_mask['attention_mask'],
         names_filter=names_filter,
         return_type=None,
-        )
+    )
     #ActivationCache
     # with keys 'blocks.layer.mlp.hook_post' etc
     # and entries mostly with shape (batch pos neuron)
@@ -196,8 +193,8 @@ def _get_all_neuron_acts(
         # print(key_to_summarise)
         # print(raw_cache[f'blocks.0.{key_to_summarise}'].shape)
         cache[key_to_summarise] = torch.stack(
-            [
-                raw_cache[f'blocks.{layer}.{key_to_summarise}'].cpu()#only load it to gpu when needed
+            [#only load it to gpu when needed:
+                raw_cache[f'blocks.{layer}.{key_to_summarise}'].cpu()
                 for layer in range(model.cfg.n_layers)
             ],
             dim=-2,#batch pos neuron/d_model -> batch pos layer neuron/d_model
@@ -206,10 +203,30 @@ def _get_all_neuron_acts(
         cache[key_to_summarise] *= mask
         #cache[key_to_summarise] = cache[key_to_summarise].cpu()
         if sampled_positions is not None:
-            assert "sample" in experiments
-            sampled_activations[key_to_summarise] = (cache[key_to_summarise][torch.arange(batch_size), sampled_positions, :,:]).cpu()
+            assert "sample" in args.experiments
+            sampled_activations[key_to_summarise] = cache[key_to_summarise][
+                torch.arange(batch_size), sampled_positions, :,:
+                ].cpu()
     del raw_cache
 
+    return cache, sampled_activations
+
+def _get_all_neuron_acts(
+    args, model, ids_and_mask, max_seq_len=1024,
+    **kwargs,
+):
+    #https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Interactive_Neuroscope.ipynb
+    intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
+
+    batch_size = len(ids_and_mask['input_ids'])
+    seq_len = max(len(ids) for ids in ids_and_mask['input_ids'])
+
+    cache, sampled_activations = _precompute_neuron_acts(
+        model=model,
+        ids_and_mask=ids_and_mask,
+        batch_size=batch_size,
+        **kwargs,
+    )
     #ln_cache: initialise with zeros (batch pos layer d_model)
     intermediate['ln_cache'] = torch.zeros(
         (batch_size, max_seq_len, model.cfg.n_layers, model.cfg.d_model)
@@ -218,12 +235,13 @@ def _get_all_neuron_acts(
     intermediate['ln_cache'][:, :seq_len, :] = cache['ln2.hook_normalized'].cpu()
 
     #prepare the loop
-    reductions = [s for s in REDUCTIONS if s in experiments]
+    reductions = [s for s in REDUCTIONS if s in args.experiments]
 
     #summary keys (mean and frequencies)
     #layer neuron
-    #intermediate['mean'] = _get_reduce(cache['mlp.hook_post'], 'sum')#not needed anymore
-    bins=utils.detect_cases(gate_values=cache['mlp.hook_pre'], in_values=cache['mlp.hook_pre_linear'])
+    bins=utils.detect_cases(
+        gate_values=cache['mlp.hook_pre'], in_values=cache['mlp.hook_pre_linear']
+    )
     for case,zero_one in bins.items():
         zero_one = zero_one.cuda()
         intermediate[(case, 'freq')] = _get_reduce(zero_one, 'sum')
@@ -277,16 +295,16 @@ def get_all_neuron_acts_on_dataset(
         os.mkdir(f'{path}/activation_cache')
     previous_batch_size = 0
     if os.path.exists(f'{path}/activation_cache/batch_size.txt'):
-        with open(f'{path}/activation_cache/batch_size.txt', 'r', encoding='utf-8') as f:
-            previous_batch_size = int(f.read())
+        with open(f'{path}/activation_cache/batch_size.txt', 'r', encoding='utf-8') as file:
+            previous_batch_size = int(file.read())
     #print(previous_batch_size, args.batch_size)
     batch_size_unchanged = previous_batch_size==args.batch_size
     if not args.no_cache and not batch_size_unchanged:
-        with open(f'{path}/activation_cache/batch_size.txt', 'w', encoding='utf-8') as f:
-            f.write(str(args.batch_size))
-    sample = {"sampled_positions":[]}
+        with open(f'{path}/activation_cache/batch_size.txt', 'w', encoding='utf-8') as file:
+            file.write(str(args.batch_size))
+    sample_data = {"sampled_positions":[]}
     for key_to_summarise in HOOKS_TO_CACHE:
-        sample[key_to_summarise] = []
+        sample_data[key_to_summarise] = []
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
@@ -298,8 +316,8 @@ def get_all_neuron_acts_on_dataset(
                 intermediate = torch.load(f"{batch_file}.pt")
                 continue
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pickle"):
-                with open(f"{batch_file}.pickle", 'rb') as f:
-                    intermediate = utils._move_to(pickle.load(f), device='cuda')
+                with open(f"{batch_file}.pickle", 'rb') as file:
+                    intermediate = utils._move_to(pickle.load(file), device='cuda')
                 continue
             sampled_positions=[]
         batch = {
@@ -321,28 +339,33 @@ def get_all_neuron_acts_on_dataset(
         if args.store_cache:
             torch.save(intermediate, f"{batch_file}.pt")
         del intermediate['ln_cache']
-        sample = _update_sample(sample, sampled_positions=sampled_positions, sampled_activations=sampled_activations)
+        sample_data = _update_sample(
+            sample_data, sampled_positions=sampled_positions, sampled_activations=sampled_activations
+        )
         if i==0:
-            out_dict = _init_out_dict(intermediate)
+            my_out_dict = _init_out_dict(intermediate)
         else:
-            out_dict = _update_out_dict(out_dict=out_dict, intermediate=intermediate)
+            my_out_dict = _update_out_dict(
+                dict_to_update=my_out_dict, update_values=intermediate,
+                args=args, i=i,
+            )
     if "sample" in args.experiments:
-        for key,value in sample.items():
+        for key,value in sample_data.items():
             if key!="sampled_positions":
-                sample[key] = torch.stack(value)
-    for key in out_dict:
+                sample_data[key] = torch.stack(value)
+    for key in my_out_dict:
         if key[-1] in ('sum', 'freq'):
-            out_dict[key] = out_dict[key].to(torch.float)
-    for key in out_dict:
+            my_out_dict[key] = my_out_dict[key].to(torch.float)
+    for key in my_out_dict:
         if key[-1]=='sum':
             #for the moment frequencies are still absolute numbers so we can do this
-            out_dict[key] /= out_dict[(key[0],'freq')]
+            my_out_dict[key] /= my_out_dict[(key[0],'freq')]
             #now the 'sum' entry is actually a mean!
-    for key in out_dict:
+    for key in my_out_dict:
         if key[-1]=='freq':
-            out_dict[key] /= float(dataset.n_tokens)
+            my_out_dict[key] /= float(dataset.n_tokens)
 
-    return out_dict, sample
+    return my_out_dict, sample_data
 
 if __name__=="__main__":
     parser = ArgumentParser()

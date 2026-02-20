@@ -49,18 +49,18 @@ def _get_reduce_and_arg(cache_item, reduction, k=1, to_device='cpu')-> dict[str,
     return vi_dict
 
 def _get_reduce(
-    cache_item, reduction, arg=False, use_cuda=True, **kwargs,
+    cache_item, reduction, arg=False, use_cuda=True, to_device='cpu', k=1,
 )->dict[str,torch.Tensor]|torch.Tensor:
     if use_cuda and torch.cuda.is_available():
         cache_item = cache_item.cuda()
 
     if arg:
-        return _get_reduce_and_arg(cache_item, reduction, **kwargs)
+        return _get_reduce_and_arg(cache_item, reduction, k=k, to_device=to_device)
     return einops.reduce(
             cache_item,
             '... layer neuron -> layer neuron',
             reduction
-            ).to(kwargs["to_device"])
+            ).to(to_device)
 
 def _compute_reductions_on_single_batch(
     cache,
@@ -174,16 +174,17 @@ def _update_sample(
         sample_to_update[key].append(value)
     return sample_to_update
 
-def _precompute_neuron_acts(model, ids_and_mask, batch_size, names_filter, sampled_positions):
-    raw_cache = model.run_with_cache(
+def _precompute_neuron_acts(model:utils.ModelWrapper, ids_and_mask, batch_size, names_filter, sampled_positions):
+    _logits, raw_cache = model.run_with_cache(
         ids_and_mask['input_ids'],
         attention_mask=ids_and_mask['attention_mask'],
         names_filter=names_filter,
-        return_type=None,
+        #return_type=None,
     )
     #ActivationCache
     # with keys 'blocks.layer.mlp.hook_post' etc
     # and entries mostly with shape (batch pos neuron)
+    del _logits
 
     mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1 1').cpu()
     #batch pos neuron
@@ -202,7 +203,7 @@ def _precompute_neuron_acts(model, ids_and_mask, batch_size, names_filter, sampl
         # print(cache[key_to_summarise].shape)
         cache[key_to_summarise] *= mask
         #cache[key_to_summarise] = cache[key_to_summarise].cpu()
-        if sampled_positions is not None:
+        if sampled_positions is not None and key_to_summarise.startswith('mlp'):
             assert "sample" in args.experiments
             sampled_activations[key_to_summarise] = cache[key_to_summarise][
                 torch.arange(batch_size), sampled_positions, :,:
@@ -304,14 +305,15 @@ def get_all_neuron_acts_on_dataset(
             file.write(str(args.batch_size))
     sample_data = {"sampled_positions":[]}
     for key_to_summarise in HOOKS_TO_CACHE:
-        sample_data[key_to_summarise] = []
+        if key_to_summarise.startswith('mlp'):
+            sample_data[key_to_summarise] = []
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
+        batch_file = f"{path}/activation_cache/batch{i}"
         if "sample" in args.experiments:
-            sampled_positions = [random.randrange(seq.shape.item()) for seq in batch['input_ids']]
+            sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
         else:
-            batch_file = f"{path}/activation_cache/batch{i}"
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
                 intermediate = torch.load(f"{batch_file}.pt")
                 continue
@@ -332,11 +334,12 @@ def get_all_neuron_acts_on_dataset(
             )
         }
         intermediate, sampled_activations = _get_all_neuron_acts(
-            model, batch, names_filter, max_seq_len=dataset.max_seq_len,
-            experiments=args.experiments,
+            args=args,
+            model=model, ids_and_mask=batch, names_filter=names_filter, max_seq_len=dataset.max_seq_len,
+            #experiments=args.experiments,
             sampled_positions=torch.tensor(sampled_positions),
         )
-        if args.store_cache:
+        if not args.no_cache:
             torch.save(intermediate, f"{batch_file}.pt")
         del intermediate['ln_cache']
         sample_data = _update_sample(
@@ -350,9 +353,13 @@ def get_all_neuron_acts_on_dataset(
                 args=args, i=i,
             )
     if "sample" in args.experiments:
+        assert len(sample_data["sampled_positions"]) > 0, "No positions were sampled!"
         for key,value in sample_data.items():
             if key!="sampled_positions":
-                sample_data[key] = torch.stack(value)
+                assert isinstance(value, list), f"Entry for {key} should be a list, but is a {type(value)}"
+                assert len(value)>0, f"Entry for {key} is empty"
+                assert isinstance(value[0], torch.Tensor), f"The list stored at key {key} should contain tensors, but contains {type(value[0])}"
+                sample_data[key] = torch.cat(value, dim=0)#concatenate along batch dimension
     for key in my_out_dict:
         if key[-1] in ('sum', 'freq'):
             my_out_dict[key] = my_out_dict[key].to(torch.float)
@@ -384,7 +391,7 @@ if __name__=="__main__":
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', action='store_true')
-    parser.add_argument('--experiments', default=EXPERIMENTS)
+    parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
     args = parser.parse_args()
 
     RUN_CODE = utils.get_run_code(args)
@@ -392,16 +399,17 @@ if __name__=="__main__":
     SAVE_PATH = f"{args.results_dir}/{RUN_CODE}"
     if not os.path.exists(SAVE_PATH):
         os.mkdir(SAVE_PATH)
-    with open("docs/pages.json", "w+", encoding="utf-8") as f:
+    with open("docs/pages.json", "r", encoding="utf-8") as f:
         page_list = json.load(f)
-        model_present = False
-        for d in page_list:
-            if d["title"]==RUN_CODE:
-                model_present=True
-                break
-        if not model_present:
-            page_list.append({"title": RUN_CODE, "children":[]})
-            json.dump(page_list, f)
+    model_present = False
+    for d in page_list:
+        if d["title"]==RUN_CODE:
+            model_present=True
+            break
+    if not model_present:
+        page_list.append({"title": RUN_CODE, "children":[]})
+        with open("docs/pages.json", "w", encoding="utf-8") as f:
+            json.dump(page_list, f, indent=True)
 
     torch.set_grad_enabled(False)
 

@@ -127,7 +127,7 @@ def neuron_vis_full(activation_data, dataset, model, neuron_dir):
     htmls = []
     # # We first add the style to make each token element have a nice border
     # htmls = [style_string]
-    #TODO weight-based analysis (circuitsvis topk tokens + RW functionality)
+    #TODO weight-based analysis (topk tokens + RW functionality)
     htmls.append(_vis_stats(
         activation_data=activation_data, actfn=model.actfn
     ))

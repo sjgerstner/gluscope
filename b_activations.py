@@ -174,7 +174,13 @@ def _update_sample(
         sample_to_update[key].append(value)
     return sample_to_update
 
-def _precompute_neuron_acts(model:utils.ModelWrapper, ids_and_mask, batch_size, names_filter, sampled_positions):
+def _precompute_neuron_acts(
+    model:utils.ModelWrapper,
+    ids_and_mask,
+    batch_size,
+    names_filter,
+    sampled_positions:torch.Tensor|None=None
+) -> tuple[dict,dict]:
     _logits, raw_cache = model.run_with_cache(
         ids_and_mask['input_ids'],
         attention_mask=ids_and_mask['attention_mask'],
@@ -203,7 +209,7 @@ def _precompute_neuron_acts(model:utils.ModelWrapper, ids_and_mask, batch_size, 
         # print(cache[key_to_summarise].shape)
         cache[key_to_summarise] *= mask
         #cache[key_to_summarise] = cache[key_to_summarise].cpu()
-        if sampled_positions is not None and key_to_summarise.startswith('mlp'):
+        if sampled_positions is not None and sampled_positions.numel()!=0 and key_to_summarise.startswith('mlp'):
             assert "sample" in args.experiments
             sampled_activations[key_to_summarise] = cache[key_to_summarise][
                 torch.arange(batch_size), sampled_positions, :,:
@@ -212,10 +218,20 @@ def _precompute_neuron_acts(model:utils.ModelWrapper, ids_and_mask, batch_size, 
 
     return cache, sampled_activations
 
+def _finalize_sample(sample_data):
+    assert len(sample_data["sampled_positions"]) > 0, "No positions were sampled!"
+    for key,value in sample_data.items():
+        if key!="sampled_positions":
+            assert isinstance(value, list), f"Entry for {key} should be a list, but is a {type(value)}"
+            assert len(value)>0, f"Entry for {key} is empty"
+            assert isinstance(value[0], torch.Tensor), f"The list stored at key {key} should contain tensors, but contains {type(value[0])}"
+            sample_data[key] = torch.cat(value, dim=0)#concatenate along batch dimension
+    torch.save(sample_data, f"{SAVE_PATH}/sample{REFACTOR_STR}.pt")
+
 def _get_all_neuron_acts(
     args, model, ids_and_mask, max_seq_len=1024,
     **kwargs,
-):
+) -> tuple[dict,dict]:
     #https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Interactive_Neuroscope.ipynb
     intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
 
@@ -307,12 +323,17 @@ def get_all_neuron_acts_on_dataset(
     for key_to_summarise in HOOKS_TO_CACHE:
         if key_to_summarise.startswith('mlp'):
             sample_data[key_to_summarise] = []
+    n_batches_to_sample = args.sample_size // args.batch_size
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
         batch_file = f"{path}/activation_cache/batch{i}"
         if "sample" in args.experiments:
-            sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
+            if i<=n_batches_to_sample:
+                sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
+            else:
+                sampled_positions = []
+                _finalize_sample(sample_data)
         else:
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
                 intermediate = torch.load(f"{batch_file}.pt")
@@ -342,9 +363,10 @@ def get_all_neuron_acts_on_dataset(
         if not args.no_cache:
             torch.save(intermediate, f"{batch_file}.pt")
         del intermediate['ln_cache']
-        sample_data = _update_sample(
-            sample_data, sampled_positions=sampled_positions, sampled_activations=sampled_activations
-        )
+        if sampled_activations:
+            sample_data = _update_sample(
+                sample_data, sampled_positions=sampled_positions, sampled_activations=sampled_activations
+            )
         if i==0:
             my_out_dict = _init_out_dict(intermediate)
         else:
@@ -352,14 +374,8 @@ def get_all_neuron_acts_on_dataset(
                 dict_to_update=my_out_dict, update_values=intermediate,
                 args=args, i=i,
             )
-    if "sample" in args.experiments:
-        assert len(sample_data["sampled_positions"]) > 0, "No positions were sampled!"
-        for key,value in sample_data.items():
-            if key!="sampled_positions":
-                assert isinstance(value, list), f"Entry for {key} should be a list, but is a {type(value)}"
-                assert len(value)>0, f"Entry for {key} is empty"
-                assert isinstance(value[0], torch.Tensor), f"The list stored at key {key} should contain tensors, but contains {type(value[0])}"
-                sample_data[key] = torch.cat(value, dim=0)#concatenate along batch dimension
+    if "sample" in args.experiments and sampled_positions:#second condition checks that sample_data was not finalized
+        _finalize_sample(sample_data)
     for key in my_out_dict:
         if key[-1] in ('sum', 'freq'):
             my_out_dict[key] = my_out_dict[key].to(torch.float)
@@ -372,7 +388,7 @@ def get_all_neuron_acts_on_dataset(
         if key[-1]=='freq':
             my_out_dict[key] /= float(dataset.n_tokens)
 
-    return my_out_dict, sample_data
+    return my_out_dict#, sample_data
 
 if __name__=="__main__":
     parser = ArgumentParser()
@@ -391,6 +407,7 @@ if __name__=="__main__":
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', action='store_true')
+    parser.add_argument('--sample_size', default=20000, help="only relevant if 'sample' in args.experiments")
     parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
     args = parser.parse_args()
 
@@ -399,17 +416,18 @@ if __name__=="__main__":
     SAVE_PATH = f"{args.results_dir}/{RUN_CODE}"
     if not os.path.exists(SAVE_PATH):
         os.mkdir(SAVE_PATH)
-    with open("docs/pages.json", "r", encoding="utf-8") as f:
-        page_list = json.load(f)
-    model_present = False
-    for d in page_list:
-        if d["title"]==RUN_CODE:
-            model_present=True
-            break
-    if not model_present:
-        page_list.append({"title": RUN_CODE, "children":[]})
-        with open("docs/pages.json", "w", encoding="utf-8") as f:
-            json.dump(page_list, f, indent=True)
+    if not args.test:
+        with open("docs/pages.json", "r", encoding="utf-8") as f:
+            page_list = json.load(f)
+        model_present = False
+        for d in page_list:
+            if d["title"]==RUN_CODE:
+                model_present=True
+                break
+        if not model_present:
+            page_list.append({"title": RUN_CODE, "children":[]})
+            with open("docs/pages.json", "w", encoding="utf-8") as f:
+                json.dump(page_list, f, indent=True)
 
     torch.set_grad_enabled(False)
 
@@ -418,7 +436,7 @@ if __name__=="__main__":
     dataset = utils.load_data(args)
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
-        dataset = dataset.select(range(4))
+        dataset = dataset.select(range(8))
     utils.add_properties(dataset)
     # dataset = dataset.with_format(
     #     type="torch",
@@ -432,12 +450,12 @@ if __name__=="__main__":
     REFACTOR_STR = "_refactored" if args.refactor_glu else""
     SUMMARY_FILE = f'{SAVE_PATH}/summary{REFACTOR_STR}'
     if not os.path.exists(f'{SUMMARY_FILE}.pickle') and not os.path.exists(f'{SUMMARY_FILE}.pt'):
-        out_dict, sample = get_all_neuron_acts_on_dataset(
+        out_dict = get_all_neuron_acts_on_dataset(
             args=args,
             model=model,
             dataset=dataset,
             path=SAVE_PATH,
         )
         torch.save(out_dict, f'{SUMMARY_FILE}.pt')
-        torch.save(sample, f"{SAVE_PATH}/sample{REFACTOR_STR}.pt")
+        #torch.save(sample, f"{SAVE_PATH}/sample{REFACTOR_STR}.pt")
     print('done!')

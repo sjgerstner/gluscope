@@ -1,12 +1,12 @@
 import torch
 from einops import rearrange
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, TransformerBridge
 
 #TODO idea:
 # sample means W_E or W_U,
 # first dimension "layers" means w_gate, w_in or w_out
 
-def standard_data(model:HookedTransformer):
+def standard_data(model:HookedTransformer|TransformerBridge):
     return {
         "tokens": [model.to_str_tokens(list(range(model.cfg.d_vocab)))],#officially samples x tokens, here just one "sample"
         "thirdDimensionName": "",#officially neurons, just numbered
@@ -25,7 +25,7 @@ def topk_token_data(logits:torch.Tensor, k=16):
         "bottomkIdxs": rearrange(bottomk.indices, 'k -> 1 1 k 1').tolist(),
     }
 
-def full_data(model:HookedTransformer, logits:torch.Tensor, k=16):
+def full_data(model:HookedTransformer|TransformerBridge, logits:torch.Tensor, k=16):
     mydict = standard_data(model)
     mydict.update(topk_token_data(logits=logits, k=k))
     return mydict

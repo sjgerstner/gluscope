@@ -274,13 +274,16 @@ def _get_all_neuron_acts(
     return intermediate, sampled_activations
 
 def get_all_neuron_acts_on_dataset(
-    args, model, dataset:datasets.Dataset, path=None
+    args,
+    model,
+    dataset:datasets.Dataset,
+    path=None,
 ):
     """Get all neuron activations on dataset.
 
     Args:
         args (Namespace): The argparse arguments
-        model (HookedTransformer): The model to run
+        model (HookedTransformer|TransformerBridge): The model to run
         dataset (Dataset): A Huggingface-style dataset to run the model on
         path (str, optional): The path to save the data.
             Within this path we will have a subdirectory activation_cache.
@@ -431,7 +434,8 @@ if __name__=="__main__":
 
     torch.set_grad_enabled(False)
 
-    model = utils.ModelWrapper.from_pretrained(args.model, refactor_glu=args.refactor_glu)
+    model = utils.ModelWrapper.boot_transformers(args.model)
+    model.enable_compatibility_mode(refactor_glu=args.refactor_glu)
 
     dataset = utils.load_data(args)
     assert isinstance(dataset, datasets.Dataset)

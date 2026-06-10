@@ -88,10 +88,12 @@ text_dataset = load_data(args)
 assert isinstance(text_dataset, Dataset)
 
 need_to_refactor = summary_dict and args.refactor_glu and not refactored_already
-model = utils.ModelWrapper.from_pretrained(
+model = utils.ModelWrapper.boot_transformers(
     args.model,
-    refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
     device='cpu' if need_to_refactor else 'cuda',
+)
+model.enable_compatibility_mode(
+    refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
 )
 #assert model.W_gate is not None
 
@@ -106,7 +108,8 @@ if need_to_refactor:
     summary_dict = utils.refactor_glu(summary_dict, sign_to_adapt)
     torch.save(summary_dict, f"{SUMMARY_FILE}.pt")
     del model
-    model = utils.ModelWrapper.from_pretrained(args.model, refactor_glu=True, device='cuda')
+    model = utils.ModelWrapper.boot_transformers(args.model, device='cuda')
+    model.enable_compatibility_mode(refactor_glu=True)
 else:
     sign_to_adapt = torch.ones(size=(N_LAYERS, N_NEURONS), dtype=torch.int)
 

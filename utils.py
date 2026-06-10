@@ -5,7 +5,7 @@ from torch import is_tensor
 
 from transformers.activations import ACT2FN
 
-from transformer_lens import HookedTransformer
+from transformer_lens import TransformerBridge
 
 import datasets
 
@@ -139,11 +139,11 @@ def adapt_activations(dict_all):
     }
     return new_dict
 
-class ModelWrapper(HookedTransformer):
+class ModelWrapper(TransformerBridge):
     """Allows to directly access the (sub) activation function of the model,
     (i.e., Swish in the case of SwiGLU etc.)
     without looking it up every time.
-    Initialise directly with model = ModelWrapper.from_pretrained(...)
+    Initialise directly with model = ModelWrapper.boot_transformers(...)
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

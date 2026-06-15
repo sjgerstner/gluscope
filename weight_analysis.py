@@ -1,6 +1,7 @@
 import torch
 from einops import rearrange
-from transformer_lens import HookedTransformer, TransformerBridge
+from transformer_lens import HookedTransformer
+from transformer_lens.model_bridge import TransformerBridge
 
 #TODO idea:
 # sample means W_E or W_U,

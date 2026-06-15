@@ -5,7 +5,7 @@ from torch import is_tensor
 
 from transformers.activations import ACT2FN
 
-from transformer_lens import TransformerBridge
+from transformer_lens.model_bridge import TransformerBridge
 
 import datasets
 

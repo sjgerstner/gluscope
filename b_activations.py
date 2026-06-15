@@ -166,9 +166,9 @@ def _update_out_dict(args, dict_to_update, update_values, i):
     return dict_to_update
 
 def _update_sample(
-    sample_to_update:dict[str,list],
-    sampled_positions:list, sampled_activations:dict[str,torch.Tensor]
-):
+    sample_to_update:dict[str,list[int|torch.Tensor]],
+    sampled_positions:list[int], sampled_activations:dict[str,torch.Tensor]
+) -> dict[str,list[int|torch.Tensor]]:
     sample_to_update["sampled_positions"].extend(sampled_positions)
     for key,value in sampled_activations.items():
         sample_to_update[key].append(value)
@@ -218,7 +218,7 @@ def _precompute_neuron_acts(
 
     return cache, sampled_activations
 
-def _finalize_sample(sample_data):
+def _finalize_sample(sample_data:dict[str,list[torch.Tensor|int]]):
     assert len(sample_data["sampled_positions"]) > 0, "No positions were sampled!"
     for key,value in sample_data.items():
         if key!="sampled_positions":
@@ -327,6 +327,7 @@ def get_all_neuron_acts_on_dataset(
         if key_to_summarise.startswith('mlp'):
             sample_data[key_to_summarise] = []
     n_batches_to_sample = args.sample_size // args.batch_size
+    sample_finalized = False
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
@@ -336,7 +337,9 @@ def get_all_neuron_acts_on_dataset(
                 sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
             else:
                 sampled_positions = []
-                _finalize_sample(sample_data)
+                if not sample_finalized:
+                    _finalize_sample(sample_data)
+                    sample_finalized = True
         else:
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
                 intermediate = torch.load(f"{batch_file}.pt")
@@ -377,7 +380,7 @@ def get_all_neuron_acts_on_dataset(
                 dict_to_update=my_out_dict, update_values=intermediate,
                 args=args, i=i,
             )
-    if "sample" in args.experiments and sampled_positions:#second condition checks that sample_data was not finalized
+    if "sample" in args.experiments and not sample_finalized:
         _finalize_sample(sample_data)
     for key in my_out_dict:
         if key[-1] in ('sum', 'freq'):
@@ -410,7 +413,7 @@ if __name__=="__main__":
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', action='store_true')
-    parser.add_argument('--sample_size', default=20000, help="only relevant if 'sample' in args.experiments")
+    parser.add_argument('--sample_size', default=7000, help="only relevant if 'sample' in args.experiments", type=int)
     parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
     args = parser.parse_args()
 

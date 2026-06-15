@@ -9,7 +9,7 @@ from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
 def _vis_example(i, indices, acts, dataset, tokenizer, key, neuron_dir, stop_tokens=None):
     index = int(indices[i])
     #print(dataset[index]['input_ids'])#tensor of ints
-    tokens = tokenizer.batch_decode(#or convert_ids_to_tokens
+    tokens = tokenizer.batch_decode(#or convert_ids_to_tokens TODO an update to HF changed the API and turns this into a single string
         dataset[index]['input_ids']
     )
     if stop_tokens is not None:

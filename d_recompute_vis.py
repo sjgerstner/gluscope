@@ -7,6 +7,8 @@ import torch
 import einops
 from datasets import load_dataset, load_from_disk, Dataset
 
+from transformer_lens.model_bridge import TransformerBridge
+
 import recompute
 from c_neuron_vis import neuron_vis_full
 import utils
@@ -24,7 +26,7 @@ parser.add_argument('--datasets_dir', default='datasets')
 parser.add_argument('--results_dir', default='results')
 parser.add_argument('--site_dir', default='docs')
 parser.add_argument('--save_to', default=None)
-parser.add_argument('--from_scratch', action='store_true')
+parser.add_argument('--from_scratch', type=bool, default=True)
 parser.add_argument('--neurons',
     nargs='+',
     default=[],
@@ -88,13 +90,14 @@ text_dataset = load_data(args)
 assert isinstance(text_dataset, Dataset)
 
 need_to_refactor = summary_dict and args.refactor_glu and not refactored_already
-model = utils.ModelWrapper.boot_transformers(
+model = TransformerBridge.boot_transformers(
     args.model,
     device='cpu' if need_to_refactor else 'cuda',
 )
 model.enable_compatibility_mode(
     refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
 )
+utils.add_actfn(model)
 #assert model.W_gate is not None
 
 tokenizer = model.tokenizer
@@ -108,8 +111,9 @@ if need_to_refactor:
     summary_dict = utils.refactor_glu(summary_dict, sign_to_adapt)
     torch.save(summary_dict, f"{SUMMARY_FILE}.pt")
     del model
-    model = utils.ModelWrapper.boot_transformers(args.model, device='cuda')
+    model = TransformerBridge.boot_transformers(args.model, device='cuda')
     model.enable_compatibility_mode(refactor_glu=True)
+    utils.add_actfn(model)
 else:
     sign_to_adapt = torch.ones(size=(N_LAYERS, N_NEURONS), dtype=torch.int)
 
@@ -170,7 +174,7 @@ for layer,neuron_list in enumerate(layer_neuron_list):
         if not model_present:
             page_list.append({"title": RUN_CODE, "children":[]})
             model_dict = page_list[-1]
-            page_list = sorted(page_list)
+            page_list = sorted(page_list, key=lambda d: d['title'])
             modified_json = True
         layer_present=False
         for layer_dict in model_dict["children"]:

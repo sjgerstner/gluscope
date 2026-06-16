@@ -17,7 +17,7 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 import einops
 
-#TODO make sure HF_HUB_CACHE is set to 1 if necessary, before loading dataset
+#TODO make sure HF_HUB_CACHE is set to 1 if necessary, before loading dataset (also in other files!)
 import datasets
 
 from transformer_lens.model_bridge import TransformerBridge

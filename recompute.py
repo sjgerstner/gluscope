@@ -8,11 +8,13 @@ import einops
 
 from datasets import Dataset
 
-from utils import ModelWrapper, detect_cases, get_act_type_keys, adapt_activations
+from transformer_lens.model_bridge import TransformerBridge
+
+from utils import detect_cases, get_act_type_keys, adapt_activations
 #from b_activations import _get_reduce
 
 def _recompute_from_cache(
-    model:ModelWrapper, layer:int, neuron:int, indices_within_dataset:torch.Tensor, save_path:str, key:tuple[str,str,str]
+    model:TransformerBridge, layer:int, neuron:int, indices_within_dataset:torch.Tensor, save_path:str, key:tuple[str,str,str]
 ) -> tuple[dict[str,torch.Tensor], torch.Tensor]:
     with open(f"{save_path}/activation_cache/batch_size.txt", 'r', encoding='utf-8') as f:
         batch_size = int(f.read())
@@ -53,14 +55,14 @@ def _recompute_from_cache(
     return intermediate, positions
 
 def _recompute_from_scratch(
-    model:ModelWrapper, layer:int, neuron:int, indices_within_dataset:torch.Tensor, dataset:Dataset,
+    model:TransformerBridge, layer:int, neuron:int, indices_within_dataset:torch.Tensor, dataset:Dataset,
 ) -> dict[str,torch.Tensor]:
-    input_ids = torch.zeros((len(indices_within_dataset), 1024), dtype=torch.int)#TODO the 1024 is hard-coded for the moment
-    attention_mask = torch.zeros((len(indices_within_dataset), 1024), dtype=torch.int)
+    input_ids = torch.zeros((len(indices_within_dataset), 1024), dtype=torch.int, device=model.device)#TODO the 1024 is hard-coded for the moment
+    attention_mask = torch.zeros((len(indices_within_dataset), 1024), dtype=torch.int, device=model.device)
     for i, index_within_dataset in enumerate(indices_within_dataset):
         example_len = len(dataset[int(index_within_dataset)]['input_ids'])
-        input_ids[i, :example_len] = torch.Tensor(dataset[int(index_within_dataset)]['input_ids'])
-        attention_mask[i, :example_len] = torch.Tensor(dataset[int(index_within_dataset)]['attention_mask'])
+        input_ids[i, :example_len] = torch.tensor(dataset[int(index_within_dataset)]['input_ids'], device=model.device)
+        attention_mask[i, :example_len] = torch.tensor(dataset[int(index_within_dataset)]['attention_mask'], device=model.device)
     names_filter = [
         f"blocks.{layer}.mlp.{hook}"
         for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']
@@ -81,7 +83,7 @@ def _recompute_from_scratch(
     return intermediate
 
 def recompute_acts(
-    model:ModelWrapper,
+    model:TransformerBridge,
     layer:int, neuron:int,
     text_dataset:Dataset,
     indices_within_dataset:torch.Tensor,
@@ -92,7 +94,7 @@ def recompute_acts(
     """Recompute activations for the given neuron and dataset indices, using cached residual stream activations.
 
     Args:
-        model (ModelWrapper): the model
+        model (TransformerBridge): the model
         layer (int): layer index
         neuron (int): neuron index within layer
         indices_within_dataset (torch.Tensor[int]): indices of relevant text examples within the dataset

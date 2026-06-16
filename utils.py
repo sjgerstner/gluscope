@@ -1,4 +1,5 @@
-from os.path import exists
+from os import environ
+from os.path import exists, join
 
 import torch
 from torch import is_tensor
@@ -139,51 +140,23 @@ def adapt_activations(dict_all):
     }
     return new_dict
 
-class ModelWrapper(TransformerBridge):
-    """Allows to directly access the (sub) activation function of the model,
-    (i.e., Swish in the case of SwiGLU etc.)
-    without looking it up every time.
-    Initialise directly with model = ModelWrapper.boot_transformers(...)
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.actfn = ACT2FN[self.cfg.act_fn]
-
-# class DatasetWrapper(Dataset):
-#     """Allows to directly access the following properties of a dataset:
-#         self.n_tokens: total number of tokens
-#         self.max_seq_len: maximum length in tokens of a single example
-#     You should FIRST create the Dataset object (e.g. with ds = datasets.load_from_disk(...))
-#     and only THEN call ds = DatasetWrapper(ds).
+# class ModelWrapper(TransformerBridge):#NOTE it doesn't work!
+#     """Allows to directly access the (sub) activation function of the model,
+#     (i.e., Swish in the case of SwiGLU etc.)
+#     without looking it up every time.
+#     Initialise directly with model = ModelWrapper.boot_transformers(...)
 #     """
-#     _n_tokens=None
-#     _max_seq_len=None
-#     # def __init__(self, *args, **kwargs):
-#     #     super().__init__(*args, **kwargs)
-#     #     self.add_properties()
-
-#     # @classmethod
-#     # def load_from_disk(cls, *args, **kwargs):
-#     #     #necessary because apparently load_from_disk does not call __init__ under the hood
-#     #     base_dataset = super().load_from_disk(*args, **kwargs)
-#     #     base_dataset.add_properties()
-
-#     # @staticmethod
-#     # def add_properties(dataset:Dataset):
-#     #     self.n_tokens = sum(len(row) for row in self['input_ids'])
-#     #     self.max_seq_len = max(len(row) for row in self['input_ids'])
-#     def n_tokens(self):
-#         if not self._n_tokens is not None:
-#             self._n_tokens = sum(len(row) for row in self['input_ids'])
-#         return self._n_tokens
-#     def max_seq_len(self):
-#         if not self._max_seq_len is not None:
-#             self._max_seq_len = max(len(row) for row in self['input_ids'])
-#         return self._max_seq_len
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.__dict__["actfn"] = ACT2FN[self.cfg.act_fn]
 
 def add_properties(dataset:datasets.Dataset):
     setattr(dataset, "n_tokens", sum(len(row) for row in dataset['input_ids']))
     setattr(dataset, "max_seq_len", max(len(row) for row in dataset['input_ids']))
+    return
+
+def add_actfn(model:TransformerBridge):
+    setattr(model, 'actfn', ACT2FN[model.cfg.act_fn])
     return
 
 def _move_to(dict_of_tensors, device):
@@ -207,7 +180,13 @@ def load_data(args):
     if exists(dataset_path):
         return datasets.load_from_disk(dataset_path)
     if args.dataset=='dolma-small':
-        return datasets.load_dataset('sjgerstner/dolma-small')['train']
+        if "WORK" in environ:
+            environ['HF_HUB_OFFLINE']='1'
+            cache_dir = join(environ["WORK"], '.cache', 'huggingface', 'hub')
+        else:
+            cache_dir = None
+        print(cache_dir)
+        return datasets.load_dataset('sjgerstner/dolma-small', cache_dir=cache_dir, split='train')
     return datasets.load_dataset(args.dataset)['train']
 
 def get_run_code(args):

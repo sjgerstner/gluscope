@@ -14,11 +14,13 @@ import random
 from tqdm import tqdm
 
 import torch
-#from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 import einops
-#from transformers import DataCollatorWithPadding
+
+#TODO make sure HF_HUB_CACHE is set to 1 if necessary, before loading dataset
 import datasets
+
+from transformer_lens.model_bridge import TransformerBridge
 
 import utils
 
@@ -175,7 +177,7 @@ def _update_sample(
     return sample_to_update
 
 def _precompute_neuron_acts(
-    model:utils.ModelWrapper,
+    model:TransformerBridge,
     ids_and_mask,
     batch_size,
     names_filter,
@@ -331,6 +333,10 @@ def get_all_neuron_acts_on_dataset(
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
+        if isinstance(batch['input_ids'][0], list):
+            for j in range(len(batch['input_ids'])):
+                batch['input_ids'][j] = torch.tensor(batch['input_ids'][j], device=model.device)#TODO do it once for the whole dataset when loading
+                batch['attention_mask'][j] = torch.tensor(batch['attention_mask'][j], device=model.device)
         batch_file = f"{path}/activation_cache/batch{i}"
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
@@ -405,14 +411,14 @@ if __name__=="__main__":
         action='store_true',
         help='whether to refactor the weights such that cos(w_gate,w_in)>=0'
     )
-    parser.add_argument('--batch_size', default=1, type=int)
+    parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--examples_per_neuron', default=16, type=int)
     #parser.add_argument('--resume_from', default=0)
     parser.add_argument('--datasets_dir', default='datasets')
     parser.add_argument('--results_dir', default='results')
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
-    parser.add_argument('--no_cache', action='store_true')
+    parser.add_argument('--no_cache', type=bool, default=True)
     parser.add_argument('--sample_size', default=7000, help="only relevant if 'sample' in args.experiments", type=int)
     parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
     args = parser.parse_args()
@@ -421,7 +427,7 @@ if __name__=="__main__":
 
     SAVE_PATH = f"{args.results_dir}/{RUN_CODE}"
     if not os.path.exists(SAVE_PATH):
-        os.mkdir(SAVE_PATH)
+        os.makedirs(SAVE_PATH, exist_ok=True)
     if not args.test:
         with open("docs/pages.json", "r", encoding="utf-8") as f:
             page_list = json.load(f)
@@ -437,9 +443,7 @@ if __name__=="__main__":
 
     torch.set_grad_enabled(False)
 
-    model = utils.ModelWrapper.boot_transformers(args.model)
-    model.enable_compatibility_mode(refactor_glu=args.refactor_glu)
-
+    print('loading dataset...')
     dataset = utils.load_data(args)
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
@@ -452,6 +456,11 @@ if __name__=="__main__":
     #     padding_value=model.tokenizer.pad_token_type_id,         # match your model's pad token
     #     pad_to_multiple_of=None
     # )
+
+    print('loading model...')
+    model = utils.TransformerBridge.boot_transformers(args.model)
+    model.enable_compatibility_mode(refactor_glu=args.refactor_glu)
+    utils.add_actfn(model)
 
     print('computing activations...')
     REFACTOR_STR = "_refactored" if args.refactor_glu else""

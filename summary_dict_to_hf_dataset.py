@@ -1,8 +1,12 @@
 from argparse import ArgumentParser
+import os
 
 import torch
 from einops import rearrange
 
+#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
+if "SLURM_JOBID" in os.environ:
+    os.environ["HF_HUB_OFFLINE"]='1'
 import datasets
 
 parser = ArgumentParser()

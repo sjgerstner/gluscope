@@ -8,6 +8,9 @@ from transformers.activations import ACT2FN
 
 from transformer_lens.model_bridge import TransformerBridge
 
+#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
+if "SLURM_JOBID" in environ:
+    environ["HF_HUB_OFFLINE"]='1'
 import datasets
 
 VALUES_TO_SUMMARISE = ['hook_post', 'hook_pre_linear', 'hook_pre', 'swish']

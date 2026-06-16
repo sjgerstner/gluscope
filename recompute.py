@@ -1,4 +1,5 @@
 """single function recompute_acts"""
+import os
 from os.path import exists
 import pickle
 from tqdm import tqdm
@@ -6,6 +7,9 @@ from tqdm import tqdm
 import torch
 import einops
 
+#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
+if "SLURM_JOBID" in os.environ:
+    os.environ["HF_HUB_OFFLINE"]='1'
 from datasets import Dataset
 
 from transformer_lens.model_bridge import TransformerBridge

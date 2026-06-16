@@ -5,6 +5,10 @@ import pickle
 
 import torch
 import einops
+
+#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
+if "SLURM_JOBID" in os.environ:
+    os.environ["HF_HUB_OFFLINE"]='1'
 from datasets import load_dataset, load_from_disk, Dataset
 
 from transformer_lens.model_bridge import TransformerBridge

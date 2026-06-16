@@ -1,16 +1,23 @@
 """Functions to visualise a neuron once all the data is computed"""
 from json import dump
+import os
 
-from torch import allclose, zeros_like
+from torch import allclose, zeros_like, tensor
 #from circuitsvis.tokens import colored_tokens_multi
+
+#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
+if "SLURM_JOBID" in os.environ:
+    os.environ["HF_HUB_OFFLINE"]='1'
+from datasets import Dataset
+from transformer_lens.model_bridge import TransformerBridge
 
 from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
 
-def _vis_example(i, indices, acts, dataset, tokenizer, key, neuron_dir, stop_tokens=None):
+def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron_dir, stop_tokens=None):
     index = int(indices[i])
     #print(dataset[index]['input_ids'])#tensor of ints
-    tokens = tokenizer.batch_decode(#or convert_ids_to_tokens TODO an update to HF changed the API and turns this into a single string
-        dataset[index]['input_ids']
+    tokens = model.to_str_tokens(
+        tensor(dataset[index]['input_ids'])
     )
     if stop_tokens is not None:
         #TODO truncate beginning
@@ -37,7 +44,7 @@ def _vis_example(i, indices, acts, dataset, tokenizer, key, neuron_dir, stop_tok
             </div>
         </details>"""
 
-def _vis_examples(activation_data, dataset, tokenizer, neuron_dir):
+def _vis_examples(activation_data, dataset, model:TransformerBridge, neuron_dir):
     htmls = []
     for case in CASES:
         htmls.append(f'<details>\n<summary><h2>Prototypical activations for case {case}</h2></summary>')
@@ -57,7 +64,7 @@ def _vis_examples(activation_data, dataset, tokenizer, neuron_dir):
                             acts=activation_data[key]['all_acts'],
                             stop_tokens=activation_data[key]['position_indices']+3,
                             dataset=dataset,
-                            tokenizer=tokenizer,
+                            model=model,
                             key=key,
                             neuron_dir=neuron_dir
                             )
@@ -115,12 +122,13 @@ def _vis_stats(activation_data, actfn):
     htmls.append('</table>')
     return "\n".join(htmls)
 
-def neuron_vis_full(activation_data, dataset, model, neuron_dir):
+def neuron_vis_full(activation_data:dict, dataset:Dataset, model:TransformerBridge, neuron_dir:str):
     """Full neuron visualisation for a given neuron.
     Args:
-        neuron_data (dict): contains summary statistics and data on max/min activations
+        activation_data (dict): contains summary statistics and data on max/min activations
         dataset (datasets.Dataset)
-        tokenizer (Huggingface tokenizer)
+        model (TransformerBridge)
+        neuron_dir (str)
     Returns:
         html string
     """
@@ -132,7 +140,7 @@ def neuron_vis_full(activation_data, dataset, model, neuron_dir):
         activation_data=activation_data, actfn=model.actfn
     ))
     htmls.append(_vis_examples(
-        activation_data=activation_data, dataset=dataset, tokenizer=model.tokenizer,
+        activation_data=activation_data, dataset=dataset, model=model,
         neuron_dir=neuron_dir,
     ))
     return "\n".join(htmls)

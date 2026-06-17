@@ -14,6 +14,7 @@ from transformer_lens.model_bridge import TransformerBridge
 from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
 
 def update_pagelist(run_code, layer, neuron):
+    modified_json=False
     try:
         with open("docs/pages.json", "r", encoding="utf-8") as read_file:
             page_list = load(read_file)

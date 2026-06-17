@@ -157,9 +157,6 @@ for layer,neuron_list in enumerate(layer_neuron_list):
         neuron_vis_dir = f"{layer_dir}/N{neuron}"
         if not os.path.exists(neuron_vis_dir):
             os.mkdir(neuron_vis_dir)
-        modified_json = False
-        if not args.test:
-            update_pagelist(run_code=RUN_CODE, layer=layer, neuron=neuron)
 
         #recomputing neuron activations on max and min examples
         print('>> gathering/recomputing data from cache...')
@@ -185,6 +182,9 @@ for layer,neuron_list in enumerate(layer_neuron_list):
                 **kwargs,
             )
         #visualisation
+        print('>> updating page list if necessary...')
+        if not args.test:
+            update_pagelist(run_code=RUN_CODE, layer=layer, neuron=neuron)
         print('>> creating html page...')
         neuron_vis_dir = f'{VIS_PATH}/L{layer}/N{neuron}'
         if not os.path.exists(neuron_vis_dir):

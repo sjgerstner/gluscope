@@ -287,9 +287,5 @@
                 ]
             }
         ]
-    },
-    {
-        "title": "gemma-2-2b",
-        "children": []
     }
 ]

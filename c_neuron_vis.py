@@ -24,14 +24,14 @@ def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron
         #TODO option to show full example
         tokens = tokens[:stop_tokens[i]]
     relevant_acts = acts[i,:len(tokens),:]#batch, pos, act_type
-    data_url = f"{"_".join(key[:2])}_example_{i}.json"
+    data_url = f"{'_'.join(key[:2])}_example_{i}.json"
     data_dict = {
         "tokens": tokens,
         "values": relevant_acts.tolist(),
         "labels": get_act_type_keys(key),
     }
     with open(f"{neuron_dir}/{data_url}", "w", encoding="utf-8") as f:
-        dump(data_dict, f)
+        dump(data_dict, f, indent=True)
     #TODO source of dataset example
         # colored_tokens_multi(
         #     tokens=tokens,

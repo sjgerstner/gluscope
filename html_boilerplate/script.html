@@ -19,11 +19,12 @@
           containerEl.id = "viz-" + Math.random().toString(36).slice(2);
         }
         // ④ Finally draw the heat‑map
-        if (containerEl.dataset.visType=="text") {
-          render(containerEl.id, ColoredTokensMulti, payload);
-        } else if (containerEl.dataset.visType=="weight") {
-          render(containerEl.id, TopkTokens, payload)
-        }
+        render(containerEl.id, ColoredTokensMulti, payload);
+        //if (containerEl.dataset.visType=="text") {
+        //  render(containerEl.id, ColoredTokensMulti, payload);
+        //} else if (containerEl.dataset.visType=="weight") {
+        //  render(containerEl.id, TopkTokens, payload)
+        //}
       })
       .finally(() => containerEl.classList.remove('loading')); // remove placeholder
     }

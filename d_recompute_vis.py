@@ -1,5 +1,4 @@
 from argparse import ArgumentParser
-import json
 import os
 import pickle
 

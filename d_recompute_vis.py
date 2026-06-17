@@ -14,7 +14,7 @@ from datasets import load_dataset, load_from_disk, Dataset
 from transformer_lens.model_bridge import TransformerBridge
 
 import recompute
-from c_neuron_vis import neuron_vis_full
+from c_neuron_vis import neuron_vis_full, update_pagelist
 import utils
 from utils import _move_to, load_data
 
@@ -158,50 +158,8 @@ for layer,neuron_list in enumerate(layer_neuron_list):
         if not os.path.exists(neuron_vis_dir):
             os.mkdir(neuron_vis_dir)
         modified_json = False
-        try:
-            with open("docs/pages.json", "r", encoding="utf-8") as read_file:
-                page_list = json.load(read_file)
-        except:
-            page_list=[
-                {"title":RUN_CODE, "children":[
-                    {"title": f"L{layer}", "children": [
-                        {"title": f"N{neuron}", "children":[]}
-                    ]}
-                ]}
-            ]
-            modified_json=True
-        model_present = False
-        for model_dict in page_list:
-            if model_dict["title"]==RUN_CODE:
-                model_present=True
-                break
-        if not model_present:
-            page_list.append({"title": RUN_CODE, "children":[]})
-            model_dict = page_list[-1]
-            page_list = sorted(page_list, key=lambda d: d['title'])
-            modified_json = True
-        layer_present=False
-        for layer_dict in model_dict["children"]:
-            if layer_dict["title"]==f"L{layer}":
-                layer_present=True
-                break
-        if not layer_present:
-            model_dict["children"].append({"title": f"L{layer}", "children":[]})
-            layer_dict=model_dict["children"][-1]
-            model_dict["children"]=sorted(model_dict["children"], key=lambda d:int(d["title"][1:]))
-            modified_json=True
-        neuron_present=False
-        for neuron_dict in layer_dict["children"]:
-            if neuron_dict["title"]==f"N{neuron}":
-                neuron_present=True
-                break
-        if not neuron_present:
-            layer_dict["children"].append({"title": f"N{neuron}", "url": f"{RUN_CODE}/L{layer}/N{neuron}/vis.html"})
-            layer_dict["children"]=sorted(layer_dict["children"], key=lambda d:int(d["title"][1:]))
-            modified_json=True
-        if modified_json:
-            with open("docs/pages.json", "w", encoding="utf-8") as write_file:
-                json.dump(page_list, write_file, indent=4)
+        if not args.test:
+            update_pagelist(run_code=RUN_CODE, layer=layer, neuron=neuron)
 
         #recomputing neuron activations on max and min examples
         print('>> gathering/recomputing data from cache...')

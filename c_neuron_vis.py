@@ -1,5 +1,5 @@
 """Functions to visualise a neuron once all the data is computed"""
-from json import dump
+from json import load, dump
 import os
 
 from torch import allclose, zeros_like, tensor
@@ -12,6 +12,52 @@ from datasets import Dataset
 from transformer_lens.model_bridge import TransformerBridge
 
 from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
+
+def update_pagelist(run_code, layer, neuron):
+    try:
+        with open("docs/pages.json", "r", encoding="utf-8") as read_file:
+            page_list = load(read_file)
+    except:
+        page_list=[
+            {"title":run_code, "children":[
+                {"title": f"L{layer}", "children": [
+                    {"title": f"N{neuron}", "children":[]}
+                ]}
+            ]}
+        ]
+        modified_json=True
+    model_present = False
+    for model_dict in page_list:
+        if model_dict["title"]==run_code:
+            model_present=True
+            break
+    if not model_present:
+        page_list.append({"title": run_code, "children":[]})
+        model_dict = page_list[-1]
+        page_list = sorted(page_list, key=lambda d: d['title'])
+        modified_json = True
+    layer_present=False
+    for layer_dict in model_dict["children"]:
+        if layer_dict["title"]==f"L{layer}":
+            layer_present=True
+            break
+    if not layer_present:
+        model_dict["children"].append({"title": f"L{layer}", "children":[]})
+        layer_dict=model_dict["children"][-1]
+        model_dict["children"]=sorted(model_dict["children"], key=lambda d:int(d["title"][1:]))
+        modified_json=True
+    neuron_present=False
+    for neuron_dict in layer_dict["children"]:
+        if neuron_dict["title"]==f"N{neuron}":
+            neuron_present=True
+            break
+    if not neuron_present:
+        layer_dict["children"].append({"title": f"N{neuron}", "url": f"{run_code}/L{layer}/N{neuron}/vis.html"})
+        layer_dict["children"]=sorted(layer_dict["children"], key=lambda d:int(d["title"][1:]))
+        modified_json=True
+    if modified_json:
+        with open("docs/pages.json", "w", encoding="utf-8") as write_file:
+            dump(page_list, write_file, indent=4)
 
 def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron_dir, stop_tokens=None):
     index = int(indices[i])
@@ -31,7 +77,7 @@ def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron
         "labels": get_act_type_keys(key),
     }
     with open(f"{neuron_dir}/{data_url}", "w", encoding="utf-8") as f:
-        dump(data_dict, f, indent=True)
+        dump(data_dict, f, indent=4)
     #TODO source of dataset example
         # colored_tokens_multi(
         #     tokens=tokens,

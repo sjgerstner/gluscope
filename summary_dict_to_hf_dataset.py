@@ -4,17 +4,16 @@ import os
 import torch
 from einops import rearrange
 
-#make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
-if "SLURM_JOBID" in os.environ:
-    os.environ["HF_HUB_OFFLINE"]='1'
 import datasets
+from huggingface_hub import whoami, login
 
 parser = ArgumentParser()
-parser.add_argument('--dir', default='results/7B_new')
+parser.add_argument('--model', default='OLMo-7B-0424-hf')
 parser.add_argument('--file', default='summary_refactored.pt')
+parser.add_argument('--push_to_hub', action='store_true', help="Make sure to set the right HF_TOKEN first.")
 args = parser.parse_args()
 
-summary_dict = torch.load(f'{args.dir}/{args.file}')
+summary_dict = torch.load(f'results/{args.model}/{args.file}')
 
 n_layers, n_neurons = summary_dict['gate+_in+', 'freq'].shape
 
@@ -35,4 +34,9 @@ for key,value in summary_dict.items():
         ).detach().cpu().numpy()
 
 dataset = datasets.Dataset.from_dict(new_dict)
-dataset.save_to_disk(f'{args.dir}/activation_dataset')
+if args.push_to_hub:
+    username = whoami(token=os.environ['HF_TOKEN'])['name']
+    login(token=os.environ['HF_TOKEN'])
+    dataset.push_to_hub(f"{username}/{args.model}_neuron-activations")
+else:
+    dataset.save_to_disk(f'results/{args.model}/activation_dataset')

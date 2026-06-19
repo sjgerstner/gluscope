@@ -362,11 +362,11 @@ def get_all_neuron_acts_on_dataset(
                 batch['input_ids'],
                 padding_value=model.tokenizer.pad_token_type_id,
                 batch_first=True,
-            ), #tensor of shape batch x pos
+            ).to(model.device), #tensor of shape batch x pos
             'attention_mask': pad_sequence(
                 batch['attention_mask'],
                 batch_first=True,
-            )
+            ).to(model.device)
         }
         intermediate, sampled_activations = _get_all_neuron_acts(
             args=args,
@@ -428,17 +428,19 @@ if __name__=="__main__":
     RUN_CODE = utils.get_run_code(args)
     SAVE_PATH = utils.make_save_path(args.results_dir, RUN_CODE)
     if not args.test:
-        with open("docs/pages.json", "r", encoding="utf-8") as f:
-            page_list = json.load(f)
-        model_present = False
-        for d in page_list:
-            if d["title"]==RUN_CODE:
-                model_present=True
-                break
-        if not model_present:
-            page_list.append({"title": RUN_CODE, "children":[]})
-            with open("docs/pages.json", "w", encoding="utf-8") as f:
-                json.dump(page_list, f, indent=True)
+        page_file = utils.get_page_file_path()
+        if os.path.exists(page_file):
+            with open(page_file, "r", encoding="utf-8") as f:
+                page_list = json.load(f)
+            model_present = False
+            for d in page_list:
+                if d["title"]==RUN_CODE:
+                    model_present=True
+                    break
+            if not model_present:
+                page_list.append({"title": RUN_CODE, "children":[]})
+                with open(page_file, "w", encoding="utf-8") as f:
+                    json.dump(page_list, f, indent=True)
 
     torch.set_grad_enabled(False)
 

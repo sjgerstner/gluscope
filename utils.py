@@ -214,3 +214,8 @@ def make_save_path(results_dir, run_code):
     )
     makedirs(save_path, exist_ok=True)
     return save_path
+
+def get_page_file_path():
+    site_dir = join(environ["WORK"], "GLUScope-web") if "WORK" in environ else "docs"
+    page_file = join(site_dir, "pages.json")
+    return page_file

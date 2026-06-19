@@ -11,11 +11,10 @@ if "SLURM_JOBID" in os.environ:
 from datasets import Dataset
 from transformer_lens.model_bridge import TransformerBridge
 
-from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
+from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE, get_page_file_path
 
 def update_pagelist(run_code, layer, neuron):
-    site_dir = os.path.join(os.environ["WORK"], "GLUScope-web") if "WORK" in os.environ else "docs"
-    page_file = os.path.join(site_dir, "pages.json")
+    page_file = get_page_file_path()
     modified_json=False
     if os.path.exists(page_file):
         with open(page_file, "r", encoding="utf-8") as read_file:

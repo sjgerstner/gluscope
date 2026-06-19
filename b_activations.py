@@ -30,6 +30,12 @@ HOOKS_TO_CACHE = ['ln2.hook_normalized', 'mlp.hook_post', 'mlp.hook_pre', 'mlp.h
 REDUCTIONS = ['max', 'sum']
 EXPERIMENTS = REDUCTIONS + ['sample']
 
+def lists_to_tensors(example):
+    for key, value in example.items():
+        if isinstance(value, list):
+            example[key] = torch.tensor(value)
+    return example
+
 def _get_reduce_and_arg(cache_item, reduction, k=1, to_device='cpu')-> dict[str,torch.Tensor]:
     if reduction not in ('max', 'min', 'top', 'bottom'):
         raise NotImplementedError(f"reduction {reduction} not implemented")
@@ -335,10 +341,10 @@ def get_all_neuron_acts_on_dataset(
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
-        if isinstance(batch['input_ids'][0], list):
-            for j in range(len(batch['input_ids'])):
-                batch['input_ids'][j] = torch.tensor(batch['input_ids'][j], device=model.device)#TODO do it once for the whole dataset when loading
-                batch['attention_mask'][j] = torch.tensor(batch['attention_mask'][j], device=model.device)
+        # if isinstance(batch['input_ids'][0], list):
+        #     for j in range(len(batch['input_ids'])):
+        #         batch['input_ids'][j] = torch.tensor(batch['input_ids'][j], device=model.device)
+        #         batch['attention_mask'][j] = torch.tensor(batch['attention_mask'][j], device=model.device)
         batch_file = f"{path}/activation_cache/batch{i}"
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
@@ -449,6 +455,7 @@ if __name__=="__main__":
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
         dataset = dataset.select(range(8))
+    dataset = dataset.map(lists_to_tensors, batched=True)
     utils.add_properties(dataset)
     # dataset = dataset.with_format(
     #     type="torch",

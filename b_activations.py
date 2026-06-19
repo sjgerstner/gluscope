@@ -417,7 +417,7 @@ if __name__=="__main__":
     parser.add_argument('--examples_per_neuron', default=16, type=int)
     #parser.add_argument('--resume_from', default=0)
     parser.add_argument('--datasets_dir', default='datasets')
-    parser.add_argument('--results_dir', default='results')
+    parser.add_argument('--results_dir', default='GLUScope-results')
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', type=bool, default=True)
@@ -426,10 +426,7 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     RUN_CODE = utils.get_run_code(args)
-
-    SAVE_PATH = f"{args.results_dir}/{RUN_CODE}"
-    if not os.path.exists(SAVE_PATH):
-        os.makedirs(SAVE_PATH, exist_ok=True)
+    SAVE_PATH = utils.make_save_path(args.results_dir, RUN_CODE)
     if not args.test:
         with open("docs/pages.json", "r", encoding="utf-8") as f:
             page_list = json.load(f)

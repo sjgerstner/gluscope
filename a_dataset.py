@@ -110,8 +110,12 @@ if args.return_overflowing_tokens:
 print(dataset[0])
 print(tokenizer.decode(dataset[0]['input_ids']))
 
-if not os.path.exists(args.datadir):
-    os.mkdir(args.datadir)
+DATADIR = os.path.join(
+    os.environ["WORK"] if "WORK" in os.environ else ".",
+    args.datadir
+)
+if not os.path.exists(DATADIR):
+    os.makedirs(DATADIR, exist_ok=True)
 if args.save_to:
     SAVE_TO = args.save_to
 else:
@@ -119,5 +123,5 @@ else:
     tokenizer_short = "-".join(args.tokenizer.split('/')[-1].split('-')[:2])
     SAVE_TO = f"{dataset_short}-{tokenizer_short}"
 dataset.save_to_disk(
-    f"{args.datadir}/{SAVE_TO}"
+    f"{DATADIR}/{SAVE_TO}"
     )

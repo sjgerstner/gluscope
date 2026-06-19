@@ -81,13 +81,21 @@ if __name__=='__main__':
         name = 'sampled-activations'
     else:
         raise NotImplementedError("File name (--file) should either contain 'summary' or 'sample'")
-    local_path=f'results/{args.model}/{name}_dataset'
+    model_path = os.path.join(
+        os.environ["WORK"] if "WORK" in os.environ else "."
+        "results",
+        args.model,
+    )
+    local_dataset_path=os.path.join(
+        model_path,
+        f'{name}_dataset'
+    )
 
-    if os.path.exists(local_path):
-        dataset = datasets.load_from_disk(local_path)
+    if os.path.exists(local_dataset_path):
+        dataset = datasets.load_from_disk(local_dataset_path)
     else:
         print('loading original dict...')
-        my_dict = torch.load(f'results/{args.model}/{args.file}')
+        my_dict = torch.load(os.path.join(model_path, args.file))
         if 'summary' in args.file:
             print('reformatting the dict...')
             new_dict = reformat_summary(my_dict)
@@ -105,4 +113,4 @@ if __name__=='__main__':
         login(token=os.environ['HF_TOKEN'])
         dataset.push_to_hub(f"{username}/{args.model}_{name}")
     else:
-        dataset.save_to_disk(local_path)
+        dataset.save_to_disk(local_dataset_path)

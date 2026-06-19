@@ -1,4 +1,4 @@
-from os import environ
+from os import environ, makedirs
 from os.path import exists, join
 
 import torch
@@ -179,7 +179,11 @@ def topk_indices(maxact, k=16, largest=True, use_cuda=True):
     return indices
 
 def load_data(args):
-    dataset_path = f'{args.datasets_dir}/{args.dataset}'
+    dataset_path = join(
+        environ["WORK"] if "WORK" in environ else ".",
+        args.datasets_dir,
+        args.dataset,
+    )
     if exists(dataset_path):
         return datasets.load_from_disk(dataset_path)
     if args.dataset=='dolma-small':
@@ -201,3 +205,12 @@ def get_run_code(args):
     if args.dataset in ('dolma_small', 'dolma-small'):
         return model_code
     return f"{model_code}_{args.dataset}"
+
+def make_save_path(results_dir, run_code):
+    save_path = join(
+        environ["WORK"] if "WORK" in environ else ".",
+        results_dir,
+        run_code
+    )
+    makedirs(save_path, exist_ok=True)
+    return save_path

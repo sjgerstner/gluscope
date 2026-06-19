@@ -26,8 +26,8 @@ parser.add_argument(
     help='whether to refactor the weights such that cos(w_gate,w_in)>=0'
 )
 parser.add_argument('--datasets_dir', default='datasets')
-parser.add_argument('--results_dir', default='results')
-parser.add_argument('--site_dir', default='docs')
+parser.add_argument('--results_dir', default='GLUScope-results')
+parser.add_argument('--site_dir', default='GLUSCope-website' if "WORK" in os.environ else 'docs')
 parser.add_argument('--save_to', default=None)
 parser.add_argument('--from_scratch', type=bool, default=True)
 parser.add_argument('--neurons',
@@ -41,15 +41,8 @@ args = parser.parse_args()
 print("preparation...")
 RUN_CODE = utils.get_run_code(args)
 #the id of the b_activations.py run
-
-if not os.path.exists(args.results_dir):
-    os.mkdir(args.results_dir)
-SAVE_PATH = f"{args.results_dir}/{RUN_CODE}"
-if not os.path.exists(SAVE_PATH):
-    os.mkdir(SAVE_PATH)
-VIS_PATH = f"{args.site_dir}/{RUN_CODE}"
-if not os.path.exists(VIS_PATH):
-    os.mkdir(VIS_PATH)
+SAVE_PATH = utils.make_save_path(args.results_dir, RUN_CODE)
+VIS_PATH = utils.make_save_path(args.site_dir, RUN_CODE)
 with open("html_boilerplate/head.html", "r", encoding="utf-8") as read_file:
     HEAD_AND_TITLE = read_file.read()+f"\n<body>\n<h1>Model: <b>{args.model}</b></h1>\n"
 with open("html_boilerplate/script.html", "r", encoding="utf-8") as read_file:

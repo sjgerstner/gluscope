@@ -14,11 +14,13 @@ from transformer_lens.model_bridge import TransformerBridge
 from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
 
 def update_pagelist(run_code, layer, neuron):
+    site_dir = os.path.join(os.environ["WORK"], "GLUScope-website") if "WORK" in os.environ else "docs"
+    page_file = os.path.join(site_dir, "pages.json")
     modified_json=False
-    try:
-        with open("docs/pages.json", "r", encoding="utf-8") as read_file:
+    if os.path.exists(page_file):
+        with open(page_file, "r", encoding="utf-8") as read_file:
             page_list = load(read_file)
-    except:
+    else:
         page_list=[
             {"title":run_code, "children":[
                 {"title": f"L{layer}", "children": [
@@ -57,7 +59,7 @@ def update_pagelist(run_code, layer, neuron):
         layer_dict["children"]=sorted(layer_dict["children"], key=lambda d:int(d["title"][1:]))
         modified_json=True
     if modified_json:
-        with open("docs/pages.json", "w", encoding="utf-8") as write_file:
+        with open(page_file, "w", encoding="utf-8") as write_file:
             dump(page_list, write_file, indent=4)
 
 def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron_dir, stop_tokens=None):

@@ -27,7 +27,7 @@ parser.add_argument(
 )
 parser.add_argument('--datasets_dir', default='datasets')
 parser.add_argument('--results_dir', default='GLUScope-results')
-parser.add_argument('--site_dir', default='GLUSCope-website' if "WORK" in os.environ else 'docs')
+parser.add_argument('--site_dir', default='GLUSCope-web' if "WORK" in os.environ else 'docs')
 parser.add_argument('--save_to', default=None)
 parser.add_argument('--from_scratch', type=bool, default=True)
 parser.add_argument('--neurons',

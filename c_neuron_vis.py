@@ -14,7 +14,7 @@ from transformer_lens.model_bridge import TransformerBridge
 from utils import CASES, get_act_type_keys, VALUES_TO_SUMMARISE
 
 def update_pagelist(run_code, layer, neuron):
-    site_dir = os.path.join(os.environ["WORK"], "GLUScope-website") if "WORK" in os.environ else "docs"
+    site_dir = os.path.join(os.environ["WORK"], "GLUScope-web") if "WORK" in os.environ else "docs"
     page_file = os.path.join(site_dir, "pages.json")
     modified_json=False
     if os.path.exists(page_file):

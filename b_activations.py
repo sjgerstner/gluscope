@@ -12,6 +12,7 @@ import os
 import pickle
 import random
 from tqdm import tqdm
+from typing import Any
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -30,10 +31,13 @@ HOOKS_TO_CACHE = ['ln2.hook_normalized', 'mlp.hook_post', 'mlp.hook_pre', 'mlp.h
 REDUCTIONS = ['max', 'sum']
 EXPERIMENTS = REDUCTIONS + ['sample']
 
-def lists_to_tensors(example):
+def lists_to_tensors(example:dict[str,list|Any])->dict[str,list|Any]:
     for key, value in example.items():
         if isinstance(value, list):
-            example[key] = torch.tensor(value)
+            if isinstance(value[0], int):
+                example[key] = torch.tensor(value)
+            elif isinstance(value[0], list) and isinstance(value[0][0], int):
+                example[key] = [torch.tensor(sublist) for sublist in value]
     return example
 
 def _get_reduce_and_arg(cache_item, reduction, k=1, to_device='cpu')-> dict[str,torch.Tensor]:
@@ -454,7 +458,7 @@ if __name__=="__main__":
     dataset = utils.load_data(args)
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
-        dataset = dataset.select(range(8))
+        dataset = dataset.select(range(33))
     dataset = dataset.map(lists_to_tensors, batched=True)
     utils.add_properties(dataset)
     # dataset = dataset.with_format(
@@ -466,7 +470,7 @@ if __name__=="__main__":
     # )
 
     print('loading model...')
-    model = utils.TransformerBridge.boot_transformers(args.model)
+    model = TransformerBridge.boot_transformers(args.model)
     model.enable_compatibility_mode(refactor_glu=args.refactor_glu)
     utils.add_actfn(model)
 

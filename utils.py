@@ -143,16 +143,6 @@ def adapt_activations(dict_all):
     }
     return new_dict
 
-# class ModelWrapper(TransformerBridge):#NOTE it doesn't work!
-#     """Allows to directly access the (sub) activation function of the model,
-#     (i.e., Swish in the case of SwiGLU etc.)
-#     without looking it up every time.
-#     Initialise directly with model = ModelWrapper.boot_transformers(...)
-#     """
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.__dict__["actfn"] = ACT2FN[self.cfg.act_fn]
-
 def add_properties(dataset:datasets.Dataset):
     setattr(dataset, "n_tokens", sum(len(row) for row in dataset['input_ids']))
     setattr(dataset, "max_seq_len", max(len(row) for row in dataset['input_ids']))

@@ -31,7 +31,7 @@ HOOKS_TO_CACHE = ['ln2.hook_normalized', 'mlp.hook_post', 'mlp.hook_pre', 'mlp.h
 REDUCTIONS = ['max', 'sum']
 EXPERIMENTS = REDUCTIONS + ['sample']
 
-def lists_to_tensors(example:dict[str,list|Any])->dict[str,list|Any]:
+def lists_to_tensors(example:dict[str,list|Any])->dict[str,list|torch.Tensor|Any]:
     for key, value in example.items():
         if isinstance(value, list):
             if isinstance(value[0], int):
@@ -350,6 +350,17 @@ def get_all_neuron_acts_on_dataset(
         #         batch['input_ids'][j] = torch.tensor(batch['input_ids'][j], device=model.device)
         #         batch['attention_mask'][j] = torch.tensor(batch['attention_mask'][j], device=model.device)
         batch_file = f"{path}/activation_cache/batch{i}"
+        batch = {
+            'input_ids': pad_sequence(
+                batch['input_ids'],
+                padding_value=model.tokenizer.pad_token_type_id,
+                batch_first=True,
+            ).to(model.device), #tensor of shape batch x pos
+            'attention_mask': pad_sequence(
+                batch['attention_mask'],
+                batch_first=True,
+            ).to(model.device)
+        }
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
                 sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
@@ -367,17 +378,7 @@ def get_all_neuron_acts_on_dataset(
                     intermediate = utils._move_to(pickle.load(file), device='cuda')
                 continue
             sampled_positions=[]
-        batch = {
-            'input_ids': pad_sequence(
-                batch['input_ids'],
-                padding_value=model.tokenizer.pad_token_type_id,
-                batch_first=True,
-            ).to(model.device), #tensor of shape batch x pos
-            'attention_mask': pad_sequence(
-                batch['attention_mask'],
-                batch_first=True,
-            ).to(model.device)
-        }
+        
         intermediate, sampled_activations = _get_all_neuron_acts(
             args=args,
             model=model, ids_and_mask=batch, names_filter=names_filter, max_seq_len=dataset.max_seq_len,
@@ -459,7 +460,8 @@ if __name__=="__main__":
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
         dataset = dataset.select(range(33))
-    dataset = dataset.map(lists_to_tensors, batched=True)
+    dataset = dataset.with_format('torch')
+    #dataset = dataset.map(lists_to_tensors, batched=True)
     utils.add_properties(dataset)
     # dataset = dataset.with_format(
     #     type="torch",
@@ -471,12 +473,17 @@ if __name__=="__main__":
 
     print('loading model...')
     model = TransformerBridge.boot_transformers(args.model)
-    model.enable_compatibility_mode(refactor_glu=args.refactor_glu)
+    model.enable_compatibility_mode(
+        refactor_glu=args.refactor_glu,
+        fold_ln=False, center_writing_weights=False, center_unembed=False,
+    )
     utils.add_actfn(model)
 
     print('computing activations...')
     REFACTOR_STR = "_refactored" if args.refactor_glu else""
     SUMMARY_FILE = f'{SAVE_PATH}/summary{REFACTOR_STR}'
+    if args.test and os.path.exists(f'{SUMMARY_FILE}.pt'):
+        os.remove(f'{SUMMARY_FILE}.pt')#make sure we can recompute and save stuff
     if not os.path.exists(f'{SUMMARY_FILE}.pickle') and not os.path.exists(f'{SUMMARY_FILE}.pt'):
         out_dict = get_all_neuron_acts_on_dataset(
             args=args,

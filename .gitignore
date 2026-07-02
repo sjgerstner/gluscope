@@ -1,3 +1,7 @@
+#slurm output files
+*.sh.o*
+
+#datasets and results
 datasets
 datasets/dolma-small-raw
 datasets/dolma-small/cache-*

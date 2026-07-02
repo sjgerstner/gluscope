@@ -40,41 +40,73 @@ def lists_to_tensors(example:dict[str,list|Any])->dict[str,list|torch.Tensor|Any
                 example[key] = [torch.tensor(sublist) for sublist in value]
     return example
 
-def _get_reduce_and_arg(cache_item, reduction, k=1, to_device='cpu')-> dict[str,torch.Tensor]:
+def _get_reduce_and_arg(
+        cache_item, reduction, k=1, to_device='cpu',
+        tensors_to_write:dict[str,torch.Tensor]|None=None, layer:int|None=None,
+        with_layer_dim:bool=True,
+    )-> dict[str,torch.Tensor]:
     if reduction not in ('max', 'min', 'top', 'bottom'):
         raise NotImplementedError(f"reduction {reduction} not implemented")
 
     #... ? layer neuron -> ... k layer neuron
     myred = torch.topk(
         cache_item,
-        dim=-3,
+        dim=-3 if with_layer_dim else -2,
         k=k,
         largest=reduction in ('max','top'),
     )
-    vi_dict = {
-        'values': myred.values.to(to_device),
-        'indices':myred.indices.to(dtype=torch.int, device=to_device),
-    }
-    if k==1:
-        for key,tensor in vi_dict.items():
-            vi_dict[key] = einops.rearrange(
-                tensor, '... 1 layer neuron -> ... layer neuron'
-            )
-    return vi_dict
+    if tensors_to_write is None:
+        tensors_to_write = {
+            'values': myred.values.to(to_device),
+            'indices':myred.indices.to(dtype=torch.int, device=to_device),
+        }
+        if k==1:
+            for key,tensor in tensors_to_write.items():
+                tensors_to_write[key] = einops.rearrange(
+                    tensor, '... 1 layer neuron -> ... layer neuron'
+                )
+    else:
+        assert layer is not None
+        try:
+            tensors_to_write['values'][...,layer:layer+1,:] = myred.values.to(to_device)
+            tensors_to_write['indices'][...,layer:layer+1,:] = myred.indices.to(to_device)
+        except RuntimeError as e:
+            print("tried to compute reduction", reduction, "with k=", k)
+            if layer is not None:
+                print("computed on a single layer")
+            if not with_layer_dim:
+                print("tried not to keep layer dim")
+            print("desired shape of values and indices:", tensors_to_write['values'].shape, tensors_to_write['indices'].shape)
+            print("actual computed shapes:", myred.values.shape, myred.indices.shape)
+            raise e
+
+    return tensors_to_write
 
 def _get_reduce(
     cache_item, reduction, arg=False, use_cuda=True, to_device='cpu', k=1,
+    tensors_to_write:torch.Tensor|dict[str,torch.Tensor]|None=None, layer:int|None=None,
+    with_layer_dim:bool=True,
 )->dict[str,torch.Tensor]|torch.Tensor:
     if use_cuda and torch.cuda.is_available():
         cache_item = cache_item.cuda()
 
     if arg:
-        return _get_reduce_and_arg(cache_item, reduction, k=k, to_device=to_device)
-    return einops.reduce(
-            cache_item,
-            '... layer neuron -> layer neuron',
-            reduction
-            ).to(to_device)
+        return _get_reduce_and_arg(
+            cache_item, reduction, k=k, to_device=to_device,
+            tensors_to_write=tensors_to_write, layer=layer,
+            with_layer_dim=with_layer_dim,
+        )
+    answer = einops.reduce(
+        cache_item,
+        '... layer neuron -> layer neuron' if with_layer_dim else '... neuron -> neuron',
+        reduction
+    ).to(to_device)
+    if isinstance(tensors_to_write, torch.Tensor):
+        assert layer is not None
+        tensors_to_write[layer:layer+1,:] = answer
+        return tensors_to_write
+    else:
+        return answer
 
 def _compute_reductions_on_single_batch(
     cache,
@@ -82,16 +114,18 @@ def _compute_reductions_on_single_batch(
     zero_one:torch.Tensor,
     case:str,
     reductions:list[str]|None=None,
+    layer:int|None=None,
 ) -> dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]]:
     if reductions is None:
         reductions=REDUCTIONS
     for key_to_summarise in utils.VALUES_TO_SUMMARISE:
         if key_to_summarise.startswith('hook'):
-            values = cache[f'mlp.{key_to_summarise}'].cuda()
+            values = cache[f'mlp.{key_to_summarise}'].cuda() if layer is None else cache[f'blocks.{layer}.mlp.{key_to_summarise}'].cuda()
         elif key_to_summarise=='swish':
-            values = model.actfn(cache['mlp.hook_pre'].cuda())
+            values = model.actfn(cache['mlp.hook_pre'].cuda()) if layer is None else model.actfn(cache[f'blocks.{layer}.mlp.hook_pre'].cuda())
         else:
             continue
+        #print(values.shape, zero_one.shape)
         values *= zero_one
         # print(relevant_values.shape)
         for reduction in reductions:
@@ -101,13 +135,16 @@ def _compute_reductions_on_single_batch(
                 values if reduction=="sum" else torch.abs(values),
                 reduction=reduction,
                 arg=(reduction!="sum"),
+                tensors_to_write=intermediate[(case, key_to_summarise, reduction)] if (case, key_to_summarise, reduction) in intermediate else None,
+                layer=layer,
+                with_layer_dim=layer is None,
             )
             #batch pos layer neuron -> {'values': batch layer neuron, 'indices': batch layer neuron}
-            if reduction=='max':
-                # print((case, key_to_summarise, reduction))
-                # print(intermediate[(case, key_to_summarise, reduction)]['values'].shape)
-                intermediate[(case, key_to_summarise, reduction)]['values'] *= utils.RELEVANT_SIGNS[case][key_to_summarise]
-                # print(intermediate[(case, key_to_summarise, reduction)]['values'].shape)
+            # if reduction=='max':
+            #     # print((case, key_to_summarise, reduction))
+            #     # print(intermediate[(case, key_to_summarise, reduction)]['values'].shape)
+            #     intermediate[(case, key_to_summarise, reduction)]['values'][...,layer,:] *= utils.RELEVANT_SIGNS[case][key_to_summarise]
+            #     # print(intermediate[(case, key_to_summarise, reduction)]['values'].shape)
     return intermediate
 
 def _init_out_dict(intermediate):
@@ -136,30 +173,30 @@ def _update_out_dict(args, dict_to_update, update_values, i):
     for key,value in dict_to_update.items():
         if key[-1] in ['sum', 'freq']:
             dict_to_update[key] = _get_reduce(
-                torch.stack([value, update_values[key]]),
+                torch.stack([value.cuda(), update_values[key].cuda()]),
                 'sum'
-                )#batch layer neuron -> layer neuron
+            ).cpu()#batch layer neuron -> layer neuron
         elif key[-1] in ['max', 'min']:
             #print(key)
-            kth = value['values'].min(dim=0).values if key[-1]=='max' else value['values'].max(dim=0).values  # threshold per (layer, neuron)
-            mask_new = (update_values[key]['values'] > kth) if key[-1]=='max' else (update_values[key]['values'] < kth) # (batch_size, layer, neuron)
+            # kth = value['values'].min(dim=0).values if key[-1]=='max' else value['values'].max(dim=0).values  # threshold per (layer, neuron)
+            # mask_new = (update_values[key]['values'] > kth) if key[-1]=='max' else (update_values[key]['values'] < kth) # (batch_size, layer, neuron)
             dict_to_update[key] = {
                 'values': torch.cat(
                     [
-                        value['values'],
-                        update_values[key]['values'][mask_new]
+                        value['values'].cpu(),
+                        update_values[key]['values'].cpu()#[mask_new]
                         ]
                     ),
                 'indices':torch.cat(
                     [
-                        value['indices'],
+                        value['indices'].cpu(),
                         torch.arange(
                             i*args.batch_size, (i+1)*args.batch_size, device='cpu'
                         ).view(
                             -1, 1, 1
                         ).expand(
                             -1, model.cfg.n_layers, model.cfg.d_mlp
-                        ).contiguous()[mask_new]
+                        ).contiguous()#[mask_new]
                         # torch.stack([
                         #         torch.full(
                         #             (model.cfg.n_layers,model.cfg.d_mlp),
@@ -209,7 +246,8 @@ def _precompute_neuron_acts(
     ids_and_mask,
     batch_size,
     names_filter,
-    sampled_positions:torch.Tensor|None=None
+    sampled_positions:torch.Tensor|None=None,
+    hooks_to_cache:list[str]=HOOKS_TO_CACHE,
 ) -> tuple[dict,dict]:
     _logits, raw_cache = model.run_with_cache(
         ids_and_mask['input_ids'],
@@ -223,31 +261,41 @@ def _precompute_neuron_acts(
     # and entries mostly with shape (batch pos neuron)
     del _logits
 
-    mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1')#.cpu()
+    #mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1')#.cpu()
     for layer in range(model.cfg.n_layers):
-        for key_to_summarise in HOOKS_TO_CACHE:
-            raw_cache[f'blocks{layer}.{key_to_summarise}'] *= mask.unsqueeze(-1)#this should just be a view of mask
+        for key_to_summarise in hooks_to_cache:
+            raw_cache.cache_dict[f'blocks.{layer}.{key_to_summarise}'] *= ids_and_mask['attention_mask'].unsqueeze(-1)#this should just be a view of mask
 
-    cache={}
     sampled_activations = {}
-    for key_to_summarise in HOOKS_TO_CACHE:
-        cache[key_to_summarise] = torch.stack(
-            [
-                raw_cache[f'blocks.{layer}.{key_to_summarise}']
-                for layer in range(model.cfg.n_layers)
-            ],
-            dim=-2,#batch pos neuron/d_model -> batch pos layer neuron/d_model
-        )#if this leads to OOM, move raw_cache and mask to cpu first, see commented-out stuff above.
-        #cache[key_to_summarise] *= mask #this happens on cpu to avoid OOM!
-        cache[key_to_summarise] = cache[key_to_summarise].cpu()
-        if sampled_positions is not None and sampled_positions.numel()!=0 and key_to_summarise.startswith('mlp'):
-            assert "sample" in args.experiments
-            sampled_activations[key_to_summarise] = cache[key_to_summarise][
-                torch.arange(batch_size), sampled_positions, :,:
-                ].cpu()
-    del raw_cache
+    if sampled_positions is not None and sampled_positions.numel()!=0:
+        assert "sample" in args.experiments
+        for key_to_summarise in hooks_to_cache:
+            if not key_to_summarise.startswith('mlp'):
+                continue
+            sampled_activations[key_to_summarise] = torch.stack(
+                [
+                    raw_cache[f'blocks.{layer}.{key_to_summarise}'][torch.arange(batch_size), sampled_positions]
+                    for layer in range(model.cfg.n_layers)
+                ],
+                dim=-2,#batch pos neuron -> batch 1 layer neuron
+            ).cpu()
+    # cache={}
+    # for key_to_summarise in hooks_to_cache:
+    #     cache[key_to_summarise] = torch.stack(
+    #         [
+    #             raw_cache[f'blocks.{layer}.{key_to_summarise}']
+    #             for layer in range(model.cfg.n_layers)
+    #         ],
+    #         dim=-2,#batch pos neuron/d_model -> batch pos layer neuron/d_model
+    #     )#if this leads to OOM, move raw_cache and mask to cpu first, see commented-out stuff above.
+    #     #cache[key_to_summarise] *= mask #this happens on cpu to avoid OOM!
+    #     cache[key_to_summarise] = cache[key_to_summarise].cpu()
+    # del raw_cache
 
-    return cache, sampled_activations
+    #alternative:
+    # raw_cache = raw_cache.to('cpu')
+
+    return raw_cache, sampled_activations
 
 def _finalize_sample(sample_data:dict[str,list[torch.Tensor|int]]):
     assert len(sample_data["sampled_positions"]) > 0, "No positions were sampled!"
@@ -261,13 +309,35 @@ def _finalize_sample(sample_data:dict[str,list[torch.Tensor|int]]):
 
 def _get_all_neuron_acts(
     args, model, ids_and_mask, max_seq_len=1024,
+    batch_file:str|None=None,
     **kwargs,
 ) -> tuple[dict,dict]:
+    #loosely inspired by
     #https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Interactive_Neuroscope.ipynb
-    intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
+
+    #prepare the loop
+    reductions = [s for s in REDUCTIONS if s in args.experiments]#currently ['max', 'sum']
 
     batch_size = len(ids_and_mask['input_ids'])
     seq_len = max(len(ids) for ids in ids_and_mask['input_ids'])
+
+    #prepare space for "intermediate" dictionary:
+    intermediate : dict[str|tuple[str,str]|tuple[str,str,str], torch.Tensor|dict[str,torch.Tensor]] = {}
+    for case in utils.CASES:
+        intermediate[(case, 'freq')] = torch.empty((model.cfg.n_layers, model.cfg.d_mlp), device='cuda')
+        for key_to_summarise in utils.VALUES_TO_SUMMARISE:
+            for reduction in reductions:
+                if key_to_summarise=='swish' and case.startswith('gate+') and reduction=='max':
+                    continue
+                if reduction=='sum':
+                    intermediate[(case, key_to_summarise, 'sum')] = torch.empty((model.cfg.n_layers, model.cfg.d_mlp), device='cuda')
+                elif reduction=='max':
+                    intermediate[(case, key_to_summarise, 'max')] = {
+                        "values": torch.empty((batch_size, model.cfg.n_layers, model.cfg.d_mlp), device='cuda'),
+                        "indices": torch.empty((batch_size, model.cfg.n_layers, model.cfg.d_mlp), device='cuda', dtype=torch.int)
+                    }
+                else:
+                    raise NotImplementedError(f"reduction must be 'max' or 'sum', but specified {reduction}")
 
     cache, sampled_activations = _precompute_neuron_acts(
         model=model,
@@ -275,33 +345,52 @@ def _get_all_neuron_acts(
         batch_size=batch_size,
         **kwargs,
     )
-    #ln_cache: initialise with zeros (batch pos layer d_model)
-    intermediate['ln_cache'] = torch.zeros(
-        (batch_size, max_seq_len, model.cfg.n_layers, model.cfg.d_model)
-        )
-    #fill in
-    intermediate['ln_cache'][:, :seq_len, :] = cache['ln2.hook_normalized'].cpu()
-
-    #prepare the loop
-    reductions = [s for s in REDUCTIONS if s in args.experiments]
+    if not args.no_cache:#TODO instead of this, directly stack tensors on GPU and save it from there?
+        assert batch_file is not None
+        #ln_cache: initialise with zeros (batch pos layer d_model)
+        ln_cache = torch.zeros(
+            (batch_size, max_seq_len, model.cfg.n_layers, model.cfg.d_model)
+            )
+        #fill in
+        for layer in range(model.cfg.n_layers):
+            ln_cache[:, :seq_len, layer, :] = cache[f'blocks.{layer}.ln2.hook_normalized'].cpu()
+        torch.save(ln_cache, f"{batch_file}.pt")
+        del ln_cache
 
     #summary keys (mean and frequencies)
     #layer neuron
-    bins=utils.detect_cases(
-        gate_values=cache['mlp.hook_pre'], in_values=cache['mlp.hook_pre_linear']
-    )
-    for case,zero_one in bins.items():
-        zero_one = zero_one.cuda()
-        intermediate[(case, 'freq')] = _get_reduce(zero_one, 'sum')
-        if reductions:
-            intermediate = _compute_reductions_on_single_batch(
-                cache=cache,
-                intermediate=intermediate,
-                zero_one=zero_one,
-                case=case,
-                reductions=reductions,
-            )
-        del zero_one
+    for layer in range(model.cfg.n_layers):
+        layerwise_intermediate = {}
+        bins=utils.detect_cases(
+            gate_values=cache[f'blocks.{layer}.mlp.hook_pre'], in_values=cache[f'blocks.{layer}.mlp.hook_pre_linear'],
+            to_device='cuda'
+        )
+        for case,zero_one in bins.items():
+            #zero_one = einops.rearrange(zero_one, 'batch pos neuron -> batch pos 1 neuron')
+            intermediate[(case, 'freq')][layer:layer+1, :] = _get_reduce(zero_one, 'sum', to_device='cuda', with_layer_dim=False)
+            if reductions:
+                intermediate = _compute_reductions_on_single_batch(
+                    cache=cache,
+                    intermediate=intermediate,
+                    zero_one=zero_one,
+                    case=case,
+                    reductions=reductions,
+                    layer=layer,
+                )
+                for key_to_summarise in utils.VALUES_TO_SUMMARISE:
+                    if key_to_summarise=='swish' and case.startswith('gate+'):
+                        continue
+                    intermediate[(case, key_to_summarise, 'max')]['values'] *= utils.RELEVANT_SIGNS[case][key_to_summarise]
+            del zero_one
+    if "to_device" in kwargs and kwargs["to_device"]=='cpu':
+        for key, value in intermediate.items():
+            if isinstance(value, torch.Tensor):
+                intermediate[key] = value.cpu()
+                del value
+            elif isinstance(value, dict):
+                for skey, svalue in value.items():
+                    value[skey] = svalue.cpu()
+                    del svalue
     return intermediate, sampled_activations
 
 def get_all_neuron_acts_on_dataset(
@@ -336,10 +425,13 @@ def get_all_neuron_acts_on_dataset(
     #each row is one batch, represented as a dict[str, list[Tensor]],
     #where the str is 'input_ids' or 'attention_mask' and the list has args.batch_size elements.
 
+    hooks_to_cache = HOOKS_TO_CACHE.copy()
+    if args.no_cache:
+        hooks_to_cache.remove('ln2.hook_normalized')
     names_filter = [
         f"blocks.{layer}.{hook}"
         for layer in range(model.cfg.n_layers)
-        for hook in HOOKS_TO_CACHE
+        for hook in hooks_to_cache
     ]
 
     if not args.no_cache and not os.path.exists(f'{path}/activation_cache'):
@@ -354,7 +446,7 @@ def get_all_neuron_acts_on_dataset(
         with open(f'{path}/activation_cache/batch_size.txt', 'w', encoding='utf-8') as file:
             file.write(str(args.batch_size))
     sample_data = {"sampled_positions":[]}
-    for key_to_summarise in HOOKS_TO_CACHE:
+    for key_to_summarise in hooks_to_cache:
         if key_to_summarise.startswith('mlp'):
             sample_data[key_to_summarise] = []
     n_batches_to_sample = args.sample_size // args.batch_size
@@ -378,6 +470,7 @@ def get_all_neuron_acts_on_dataset(
                 batch_first=True,
             ).to(model.device)
         }
+        print('batch shape:', batch['input_ids'].shape)
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
                 sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
@@ -401,10 +494,12 @@ def get_all_neuron_acts_on_dataset(
             model=model, ids_and_mask=batch, names_filter=names_filter, max_seq_len=dataset.max_seq_len,
             #experiments=args.experiments,
             sampled_positions=torch.tensor(sampled_positions),
+            hooks_to_cache=hooks_to_cache,
+            batch_file=batch_file,
         )
-        if not args.no_cache:
-            torch.save(intermediate, f"{batch_file}.pt")
-        del intermediate['ln_cache']
+        # if not args.no_cache:
+        #     torch.save(intermediate, f"{batch_file}.pt")
+        #     del intermediate['ln_cache']
         if sampled_activations:
             sample_data = _update_sample(
                 sample_data, sampled_positions=sampled_positions, sampled_activations=sampled_activations

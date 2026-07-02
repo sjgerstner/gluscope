@@ -117,11 +117,18 @@ def _init_out_dict(intermediate):
             initial_dict[key]=value
         elif key[-1] in ['max', 'min']:
             initial_dict[key] = {
-                'values':value['values'],
-                'indices':torch.stack([
-                    torch.full((model.cfg.n_layers,model.cfg.d_mlp), counter)
-                    for counter in range(args.batch_size)
-                ])
+                'values': value['values'],
+                'indices': torch.arange(
+                        0, args.batch_size, device='cpu'
+                    ).view(
+                        -1, 1, 1
+                    ).expand(
+                        -1, model.cfg.n_layers, model.cfg.d_mlp
+                    ).contiguous()
+                # torch.stack([
+                #     torch.full((model.cfg.n_layers,model.cfg.d_mlp), counter)
+                #     for counter in range(args.batch_size)
+                # ])
             }
     return initial_dict
 
@@ -134,23 +141,32 @@ def _update_out_dict(args, dict_to_update, update_values, i):
                 )#batch layer neuron -> layer neuron
         elif key[-1] in ['max', 'min']:
             #print(key)
+            kth = value['values'].min(dim=0).values if key[-1]=='max' else value['values'].max(dim=0).values  # threshold per (layer, neuron)
+            mask_new = (update_values[key]['values'] > kth) if key[-1]=='max' else (update_values[key]['values'] < kth) # (batch_size, layer, neuron)
             dict_to_update[key] = {
                 'values': torch.cat(
                     [
                         value['values'],
-                        update_values[key]['values']
+                        update_values[key]['values'][mask_new]
                         ]
                     ),
                 'indices':torch.cat(
                     [
                         value['indices'],
-                        torch.stack([
-                                torch.full(
-                                    (model.cfg.n_layers,model.cfg.d_mlp),
-                                    i*args.batch_size+counter
-                                )
-                                for counter in range(args.batch_size)
-                            ])
+                        torch.arange(
+                            i*args.batch_size, (i+1)*args.batch_size, device='cpu'
+                        ).view(
+                            -1, 1, 1
+                        ).expand(
+                            -1, model.cfg.n_layers, model.cfg.d_mlp
+                        ).contiguous()[mask_new]
+                        # torch.stack([
+                        #         torch.full(
+                        #             (model.cfg.n_layers,model.cfg.d_mlp),
+                        #             i*args.batch_size+counter
+                        #         )
+                        #         for counter in range(args.batch_size)
+                        #     ])
                         ]
                     )
             }#both entries: sample layer neuron
@@ -200,29 +216,30 @@ def _precompute_neuron_acts(
         attention_mask=ids_and_mask['attention_mask'],
         names_filter=names_filter,
         #return_type=None,
+        #device='cpu'#moves the cache, not the model. Avoids OOM errors.
     )
-    #ActivationCache
+    # raw_cache is an ActivationCache
     # with keys 'blocks.layer.mlp.hook_post' etc
     # and entries mostly with shape (batch pos neuron)
     del _logits
 
-    mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1 1').cpu()
-    #batch pos neuron
+    mask = einops.rearrange(ids_and_mask['attention_mask'], 'batch pos -> batch pos 1')#.cpu()
+    for layer in range(model.cfg.n_layers):
+        for key_to_summarise in HOOKS_TO_CACHE:
+            raw_cache[f'blocks{layer}.{key_to_summarise}'] *= mask.unsqueeze(-1)#this should just be a view of mask
+
     cache={}
     sampled_activations = {}
     for key_to_summarise in HOOKS_TO_CACHE:
-        # print(key_to_summarise)
-        # print(raw_cache[f'blocks.0.{key_to_summarise}'].shape)
         cache[key_to_summarise] = torch.stack(
-            [#only load it to gpu when needed:
-                raw_cache[f'blocks.{layer}.{key_to_summarise}'].cpu()
+            [
+                raw_cache[f'blocks.{layer}.{key_to_summarise}']
                 for layer in range(model.cfg.n_layers)
             ],
             dim=-2,#batch pos neuron/d_model -> batch pos layer neuron/d_model
-        )
-        # print(cache[key_to_summarise].shape)
-        cache[key_to_summarise] *= mask
-        #cache[key_to_summarise] = cache[key_to_summarise].cpu()
+        )#if this leads to OOM, move raw_cache and mask to cpu first, see commented-out stuff above.
+        #cache[key_to_summarise] *= mask #this happens on cpu to avoid OOM!
+        cache[key_to_summarise] = cache[key_to_summarise].cpu()
         if sampled_positions is not None and sampled_positions.numel()!=0 and key_to_summarise.startswith('mlp'):
             assert "sample" in args.experiments
             sampled_activations[key_to_summarise] = cache[key_to_summarise][
@@ -378,7 +395,7 @@ def get_all_neuron_acts_on_dataset(
                     intermediate = utils._move_to(pickle.load(file), device='cuda')
                 continue
             sampled_positions=[]
-        
+
         intermediate, sampled_activations = _get_all_neuron_acts(
             args=args,
             model=model, ids_and_mask=batch, names_filter=names_filter, max_seq_len=dataset.max_seq_len,

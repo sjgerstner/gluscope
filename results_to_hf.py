@@ -1,3 +1,6 @@
+#TODO summary_dict format has changed!
+#TODO aggregated way to publish the sample
+
 from argparse import ArgumentParser
 import os
 

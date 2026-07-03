@@ -190,24 +190,46 @@ def recompute_acts_if_necessary(args, summary_dict, maxmin_keys, neuron_dir, sin
         single_sign_to_adapt=single_sign_to_adapt
     )
     if activation_data is None:
-        activation_data = {case_key:recompute_acts(
-                **kwargs,
-                key=case_key,
-                indices_within_dataset=summary_dict[case_key]['indices'][...,kwargs['layer'],kwargs['neuron']],
-                from_scratch=args.from_scratch,
-            )
-            for case_key in tqdm(maxmin_keys)}
+        if not maxmin_keys[0][1].startswith('blocks'):
+            activation_data = {
+                case_key
+                :
+                recompute_acts(
+                    **kwargs,
+                    key=case_key,
+                    indices_within_dataset=summary_dict[case_key]['indices'][...,kwargs['layer'],kwargs['neuron']],
+                    from_scratch=args.from_scratch,
+                )
+                for case_key in tqdm(maxmin_keys)
+            }
+        else:
+            activation_data = {
+                (case_key[0], '.'.join(case_key[1].split('.')[2:]), case_key[2])
+                :
+                recompute_acts(
+                    **kwargs,
+                    key=case_key,
+                    indices_within_dataset=summary_dict[case_key]['indices'][...,kwargs['neuron']],
+                    from_scratch=args.from_scratch,
+                )
+                for case_key in tqdm(maxmin_keys) if int(case_key[1].split('.')[1])==kwargs['layer']
+            }
     activation_data = color_hacks_wrap(activation_data)
     torch.save(activation_data, activations_file)
     return activation_data
 
 def expand_with_summary(activation_data, summary_dict, layer, neuron):
     for key,value in summary_dict.items():
+        new_key=key
+        if key[1].startswith('blocks'):
+            if int(key[1].split('.')[1])!=layer:
+                continue
+            new_key = (key[0], key[1].split('.')[2:], key[2])
         if isinstance(value, torch.Tensor):
-            activation_data[key]=value[...,layer,neuron]
+            activation_data[new_key] = value[...,layer,neuron] if not key[1].startswith('blocks') else value[...,neuron]
         elif isinstance(value, dict):
             for key1,value1 in value.items():
-                activation_data[key][key1]=value1[...,layer,neuron]
+                activation_data[new_key][key1] = value1[...,layer,neuron] if not key[1].startswith('blocks') else value1[...,neuron]
     return activation_data
 
 def neuron_data_from_dict(args, summary_dict, maxmin_keys, neuron_dir, single_sign_to_adapt=1, **kwargs):

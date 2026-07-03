@@ -1,3 +1,6 @@
+#TODO the structure of the summary dict has changed!
+#TODO refactor_glu for summary_dataset?
+
 from argparse import ArgumentParser
 import os
 import pickle
@@ -104,7 +107,10 @@ if need_to_refactor:
     sign_to_adapt = torch.sign(einops.einsum(
         model.W_in.detach().cuda(), model.W_gate.detach().cuda(), "l d n, l d n -> l n"
     ))
-    summary_dict = utils.refactor_glu(summary_dict, sign_to_adapt)
+    if "summary_mean" in summary_dict:#legacy
+        summary_dict = utils.refactor_glu_old(summary_dict, sign_to_adapt)
+    else:
+        summary_dict = utils.refactor_glu(summary_dict, sign_to_adapt)
     torch.save(summary_dict, f"{SUMMARY_FILE}.pt")
     del model
     model = TransformerBridge.boot_transformers(args.model, device='cuda')

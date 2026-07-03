@@ -451,13 +451,19 @@ def get_all_neuron_acts_on_dataset(
             sample_data[key_to_summarise] = []
     n_batches_to_sample = args.sample_size // args.batch_size
     sample_finalized = False
-    if os.path.exists(f'{path}/checkpoints'):
-        last_checkpoint_number = max(int(s.split('-')[1].split('.')[0]) for s in os.listdir(f'{path}/checkpoints'))#TODO
+    if os.path.exists(f'{path}/checkpoints') and os.listdir(f'{path}/checkpoints'):
+        last_checkpoint_number = max(
+            int(s.split('-')[1].split('.')[0])
+            for s in os.listdir(f'{path}/checkpoints')
+        )
         my_out_dict = torch.load(f'{path}/checkpoints/checkpoint-{last_checkpoint_number}.pt')
+    else:
+        last_checkpoint_number=-1
+    number_of_batches_to_skip=last_checkpoint_number//args.batch_size
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
-        if i<=last_checkpoint_number:
+        if i<=number_of_batches_to_skip:
             continue
         # if isinstance(batch['input_ids'][0], list):
         #     for j in range(len(batch['input_ids'])):
@@ -475,7 +481,7 @@ def get_all_neuron_acts_on_dataset(
                 batch_first=True,
             ).to(model.device)
         }
-        print('batch shape:', batch['input_ids'].shape)
+        #print('batch shape:', batch['input_ids'].shape)
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
                 sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
@@ -519,8 +525,9 @@ def get_all_neuron_acts_on_dataset(
             if i%args.save_every==0:
                 if not os.path.exists(f'{path}/checkpoints'):
                     os.makedirs(f'{path}/checkpoints')
-                torch.save(my_out_dict, f'{path}/checkpoints/checkpoint-{i}.pt')
-                os.remove(f'{path}/checkpoints/checkpoint-{i-args.save_every}.pt')
+                torch.save(my_out_dict, f'{path}/checkpoints/checkpoint-{i*args.batch_size}.pt')
+                if os.path.exists(f'{path}/checkpoints/checkpoint-{(i-args.save_every)*args.batch_size}.pt'):
+                    os.remove(f'{path}/checkpoints/checkpoint-{(i-args.save_every)*args.batch_size}.pt')
     if "sample" in args.experiments and not sample_finalized:
         _finalize_sample(sample_data)
     for key in my_out_dict:
@@ -605,8 +612,12 @@ if __name__=="__main__":
     print('computing activations...')
     REFACTOR_STR = "_refactored" if args.refactor_glu else""
     SUMMARY_FILE = f'{SAVE_PATH}/summary{REFACTOR_STR}'
-    if args.test and os.path.exists(f'{SUMMARY_FILE}.pt'):
-        os.remove(f'{SUMMARY_FILE}.pt')#make sure we can recompute and save stuff
+    if args.test and os.path.exists(SAVE_PATH):
+        if os.path.exists(f'{SUMMARY_FILE}.pt'):
+            os.remove(f'{SUMMARY_FILE}.pt')#make sure we can recompute and save stuff
+        if os.path.exists(os.path.join(SAVE_PATH, 'checkpoints')):
+            for f in os.listdir(os.path.join(SAVE_PATH, 'checkpoints')):
+                os.remove(os.path.join(SAVE_PATH, 'checkpoints', f))
     if not os.path.exists(f'{SUMMARY_FILE}.pickle') and not os.path.exists(f'{SUMMARY_FILE}.pt'):
         out_dict = get_all_neuron_acts_on_dataset(
             args=args,

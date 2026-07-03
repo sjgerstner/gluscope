@@ -1,4 +1,3 @@
-#TODO summary_dict format has changed!
 #TODO aggregated way to publish the sample
 
 from argparse import ArgumentParser
@@ -11,7 +10,7 @@ from einops import rearrange
 from huggingface_hub import whoami, login
 import datasets
 
-def reformat_summary(
+def reformat_summary_old(
     summary_dict:dict[tuple, torch.Tensor|dict[str,torch.Tensor]]
     )->dict[str,list[int]|np.ndarray]:
     n_layers, n_neurons = summary_dict['gate+_in+', 'freq'].shape
@@ -29,6 +28,41 @@ def reformat_summary(
             ).detach().cpu().numpy()
             new_dict[f'{str_key}_indices'] = rearrange(
                 value['indices'], 'topk l n -> (l n) topk'
+            ).detach().cpu().numpy()
+    return new_dict
+
+def reformat_summary(
+    summary_dict:dict[tuple, torch.Tensor|dict[str,torch.Tensor]]
+    )->dict[str,list[int]|np.ndarray]:
+    n_layers, n_neurons = summary_dict['gate+_in+', 'freq'].shape
+    new_dict:dict[str,list[int]|np.ndarray] = {
+        "layer": [l for l in range(n_layers) for _n in range(n_neurons)],
+        "neuron": list(range(n_neurons))*n_layers,
+    }
+    keyset = set()
+    for key in summary_dict:
+        if key[-1]=='freq':
+            keyset.add(key)
+        else:
+            keyset.add((key[0], '.'.join(key[1].split('.')[2:]), key[2]))
+    for key in keyset:
+        str_key = "_".join(key).replace("sum", "mean")
+        if key[-1]=='freq':
+            new_dict[str_key] = rearrange(summary_dict[key], 'l n -> (l n)').detach().cpu().numpy()
+        elif key[-1]!='sum':
+            new_dict[str_key] = torch.cat(
+                summary_dict[(key[0], f'blocks.{layer}.{key[1]}', key[2])]
+                for layer in range(n_layers)
+            ).detach().cpu().numpy()
+        else:
+            assert key[-1]=='max', f"last part of key should be 'freq', 'str', or 'max', but key is {key}"
+            new_dict[f'{str_key}_values'] = torch.cat(
+                rearrange(summary_dict[(key[0], f'blocks.{layer}.{key[1]}', key[2])]['values'], 'topk n -> n topk')
+                for layer in range(n_layers)
+            ).detach().cpu().numpy()
+            new_dict[f'{str_key}_indices'] = torch.cat(
+                rearrange(summary_dict[(key[0], f'blocks.{layer}.{key[1]}', key[2])]['indices'], 'topk n -> n topk')
+                for layer in range(n_layers)
             ).detach().cpu().numpy()
     return new_dict
 
@@ -101,7 +135,10 @@ if __name__=='__main__':
         my_dict = torch.load(os.path.join(model_path, args.file))
         if 'summary' in args.file:
             print('reformatting the dict...')
-            new_dict = reformat_summary(my_dict)
+            if not any(key[1].startswith('blocks') for key in my_dict):
+                new_dict = reformat_summary_old(my_dict)
+            else:
+                new_dict = reformat_summary(my_dict)
             print('converting to dataset...')
             dataset = datasets.Dataset.from_dict(new_dict)
         else:# 'sample' in args.file:

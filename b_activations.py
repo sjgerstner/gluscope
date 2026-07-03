@@ -451,9 +451,14 @@ def get_all_neuron_acts_on_dataset(
             sample_data[key_to_summarise] = []
     n_batches_to_sample = args.sample_size // args.batch_size
     sample_finalized = False
+    if os.path.exists(f'{path}/checkpoints'):
+        last_checkpoint_number = max(int(s.split('-')[1].split('.')[0]) for s in os.listdir(f'{path}/checkpoints'))#TODO
+        my_out_dict = torch.load(f'{path}/checkpoints/checkpoint-{last_checkpoint_number}.pt')
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
+        if i<=last_checkpoint_number:
+            continue
         # if isinstance(batch['input_ids'][0], list):
         #     for j in range(len(batch['input_ids'])):
         #         batch['input_ids'][j] = torch.tensor(batch['input_ids'][j], device=model.device)
@@ -511,6 +516,11 @@ def get_all_neuron_acts_on_dataset(
                 dict_to_update=my_out_dict, update_values=intermediate,
                 args=args, i=i,
             )
+            if i%args.save_every==0:
+                if not os.path.exists(f'{path}/checkpoints'):
+                    os.makedirs(f'{path}/checkpoints')
+                torch.save(my_out_dict, f'{path}/checkpoints/checkpoint-{i}.pt')
+                os.remove(f'{path}/checkpoints/checkpoint-{i-args.save_every}.pt')
     if "sample" in args.experiments and not sample_finalized:
         _finalize_sample(sample_data)
     for key in my_out_dict:
@@ -545,6 +555,7 @@ if __name__=="__main__":
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', type=bool, default=True)
     parser.add_argument('--sample_size', default=7000, help="only relevant if 'sample' in args.experiments", type=int)
+    parser.add_argument('--save_every', type=int, default=100)
     parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
     args = parser.parse_args()
 

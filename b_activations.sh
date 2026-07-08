@@ -9,5 +9,4 @@ unset SLURM_EXPORT_ENV
 srun --kill-on-bad-exit=1 --output="$WORK/GLUScope_logs/$SLURM_JOB_ID.out" --error="$WORK/GLUScope_logs/$SLURM_JOB_ID.error" \
     apptainer exec --nv $WORK/weakening4.sif \
     python b_activations.py \
-        --refactor_glu \
         "$@"

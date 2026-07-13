@@ -493,11 +493,11 @@ def get_all_neuron_acts_on_dataset(
         else:
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
                 intermediate = torch.load(f"{batch_file}.pt")
-                continue
+                #continue
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pickle"):
                 with open(f"{batch_file}.pickle", 'rb') as file:
                     intermediate = utils._move_to(pickle.load(file), device='cuda')
-                continue
+                #continue
             sampled_positions=[]
 
         intermediate, sampled_activations = _get_all_neuron_acts(
@@ -536,7 +536,12 @@ def get_all_neuron_acts_on_dataset(
     for key in my_out_dict:
         if key[-1]=='sum':
             #for the moment frequencies are still absolute numbers so we can do this
-            my_out_dict[key] /= my_out_dict[(key[0],'freq')]
+            freq = my_out_dict[(key[0],'freq')]
+            my_out_dict[key] = torch.where(
+                freq > 0,
+                my_out_dict[key] / freq,
+                torch.zeros_like(my_out_dict[key])
+            )
             #now the 'sum' entry is actually a mean!
     for key in my_out_dict:
         if key[-1]=='freq':

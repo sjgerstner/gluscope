@@ -602,7 +602,11 @@ if __name__=="__main__":
     # )
 
     print('loading model...')
-    model = TransformerBridge.boot_transformers(args.model)
+    print(torch.cuda.device_count(), "available GPUs")
+    model = TransformerBridge.boot_transformers(
+        args.model,
+        n_devices=torch.cuda.device_count(),
+    )
     model.enable_compatibility_mode(
         refactor_glu=args.refactor_glu,
         fold_ln=False, center_writing_weights=False, center_unembed=False,

@@ -65,7 +65,7 @@ def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron
     index = int(indices[i])
     #print(dataset[index]['input_ids'])#tensor of ints
     tokens = model.to_str_tokens(
-        tensor(dataset[index]['input_ids'])
+        dataset[index]['text']
     )
     if stop_tokens is not None:
         #TODO truncate beginning
@@ -98,6 +98,7 @@ def _vis_examples(activation_data, dataset, model:TransformerBridge, neuron_dir)
         htmls.append(f'<details>\n<summary><h2>Prototypical activations for case {case}</h2></summary>')
         for act_type in VALUES_TO_SUMMARISE:
             key = (case, act_type, 'max')
+            #TODO the following condition apparently fails for cases other than gate+_in+
             if key in activation_data and 'all_acts' in activation_data[key] and activation_data[key]['values'][0]!=0:
                 htmls.append(f'<details>\n<summary><h3>Extreme {act_type} activations</h3></summary>')
                 for i in range(activation_data[key]['indices'].shape[0]):

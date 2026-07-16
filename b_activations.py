@@ -327,6 +327,9 @@ def get_all_neuron_acts_on_dataset(
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
+        if i==0:
+            print(batch['text'][0])
+            print(model.to_string(batch['input_ids'][0]))
         batch_file = f"{path}/activation_cache/batch{i}"
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:

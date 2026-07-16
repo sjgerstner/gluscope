@@ -365,6 +365,8 @@ def _get_all_neuron_acts(
                 )
             del zero_one
             torch.cuda.empty_cache()
+            if not torch.allclose(intermediate[(case, 'freq')][layer, :],0):
+                assert not torch.allclose(intermediate[(case, 'hook_post', 'max')]['values'][:,layer], 0)
     if "to_device" in kwargs and kwargs["to_device"]=='cpu':
         for key, value in intermediate.items():
             if isinstance(value, torch.Tensor):

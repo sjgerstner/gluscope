@@ -123,13 +123,12 @@ def _compute_reductions_on_single_batch(
         reductions=REDUCTIONS
     for key_to_summarise in utils.VALUES_TO_SUMMARISE:
         if key_to_summarise.startswith('hook'):
-            values = cache[f'mlp.{key_to_summarise}'].cuda() if layer is None else cache[f'blocks.{layer}.mlp.{key_to_summarise}'].cuda()
+            raw_values = cache[f'mlp.{key_to_summarise}'].cuda() if layer is None else cache[f'blocks.{layer}.mlp.{key_to_summarise}'].cuda()
         elif key_to_summarise=='swish':
-            values = model.actfn(cache['mlp.hook_pre'].cuda()) if layer is None else model.actfn(cache[f'blocks.{layer}.mlp.hook_pre'].cuda())
+            raw_values = model.actfn(cache['mlp.hook_pre'].cuda()) if layer is None else model.actfn(cache[f'blocks.{layer}.mlp.hook_pre'].cuda())
         else:
             continue
-        #print(values.shape, zero_one.shape)
-        values *= zero_one
+        values = raw_values * zero_one
         # print(relevant_values.shape)
         for reduction in reductions:
             if key_to_summarise=='swish' and case.startswith('gate+') and reduction=='max':
@@ -364,11 +363,8 @@ def _get_all_neuron_acts(
                     reductions=reductions,
                     layer=layer,
                 )
-                # for key_to_summarise in utils.VALUES_TO_SUMMARISE:
-                #     if key_to_summarise=='swish' and case.startswith('gate+'):
-                #         continue
-                #     intermediate[(case, key_to_summarise, 'max')]['values'] *= utils.RELEVANT_SIGNS[case][key_to_summarise]
             del zero_one
+            torch.cuda.empty_cache()
     if "to_device" in kwargs and kwargs["to_device"]=='cpu':
         for key, value in intermediate.items():
             if isinstance(value, torch.Tensor):

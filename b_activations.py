@@ -25,6 +25,7 @@ import datasets
 
 from transformer_lens.model_bridge import TransformerBridge
 
+from a_dataset import tokenize_dataset
 import utils
 
 HOOKS_TO_CACHE = ['ln2.hook_normalized', 'mlp.hook_post', 'mlp.hook_pre', 'mlp.hook_pre_linear']
@@ -465,14 +466,19 @@ def get_all_neuron_acts_on_dataset(
                 batch_first=True,
             ).to(model.device)
         }
-        #print('batch shape:', batch['input_ids'].shape)
+        if i==0:
+            print('batch shape:', batch['input_ids'].shape)
+            for seq in batch['input_ids']:
+                print(seq.size())
+                print(seq.size(dim=0))
+                break
         if "sample" in args.experiments:
             if i<=n_batches_to_sample:
                 sampled_positions = [random.randrange(seq.size(dim=0)) for seq in batch['input_ids']]
             else:
                 sampled_positions = []
                 if not sample_finalized:
-                    _finalize_sample(sample_data)
+                    _finalize_sample(sample_data)#TODO this leads to an assertion error when resuming from checkpoint
                     sample_finalized = True
         else:
             if batch_size_unchanged and os.path.exists(f"{batch_file}.pt"):
@@ -532,24 +538,36 @@ def get_all_neuron_acts_on_dataset(
 
 if __name__=="__main__":
     parser = ArgumentParser()
+    #dataset arguments
     parser.add_argument('--dataset', default='dolma-small')
+    parser.add_argument('--add_bos_token', type=bool, default=True,
+                        help="add bos token to every example")
+    parser.add_argument('--max_length', type=int, default=1024,
+                        help="length of example token blocks")
+    parser.add_argument('--return_overflowing_tokens', type=bool, default=False,
+                        help="""Make additional training examples with overflowing tokens.
+                        In this case it is currently not possible to keep the ids and metadata.""")
+    parser.add_argument('--padding', type=bool, default=False,
+                        help="pad examples to args.max_length")
+    #model arguments
     parser.add_argument('--model', default='allenai/OLMo-1B-hf')
     parser.add_argument(
         '--refactor_glu',
         action='store_true',
         help='whether to refactor the weights such that cos(w_gate,w_in)>=0'
     )
+    #corpus processing arguments
     parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--examples_per_neuron', default=16, type=int)
-    #parser.add_argument('--resume_from', default=0)
     parser.add_argument('--datasets_dir', default='datasets')
     parser.add_argument('--results_dir', default='GLUScope-results')
     parser.add_argument('--save_to', default=None)
     parser.add_argument('--test', action='store_true')
     parser.add_argument('--no_cache', type=bool, default=True)
-    parser.add_argument('--sample_size', default=7000, help="only relevant if 'sample' in args.experiments", type=int)
+    parser.add_argument('--sample_size', default=1000, help="only relevant if 'sample' in args.experiments", type=int)
     parser.add_argument('--save_every', type=int, default=100)
     parser.add_argument('--experiments', nargs='+', default=EXPERIMENTS)
+
     args = parser.parse_args()
 
     RUN_CODE = utils.get_run_code(args)
@@ -576,6 +594,10 @@ if __name__=="__main__":
     assert isinstance(dataset, datasets.Dataset)
     if args.test:
         dataset = dataset.select(range(33))
+
+    if not args.model.startswith('allenai/OLMo-1B') and not args.model.startswith('allenai/OLMo-7B'):
+        dataset, _tokenizer = tokenize_dataset(args, dataset)
+
     dataset = dataset.with_format('torch')
     utils.add_properties(dataset)
 

@@ -147,22 +147,33 @@ def recompute_acts(
 
     return {'all_acts':recomputed_acts, 'position_indices':positions, 'act_type_keys':act_type_keys}
 
-def color_hacks(my_slice):
+def color_hacks(my_slice, verbose=False):
     """two hacks for ColoredTokens"""
     if torch.all(my_slice<=0):
         my_slice[my_slice==0]=-1e-7
+        if verbose:
+            print("applied color hack for negative zeros")
     else:
         my_slice[my_slice==0]=+0.0
     return my_slice
 
-def color_hacks_wrap(activation_data):
+def color_hacks_wrap(activation_data, verbose=False):
     for case_key in activation_data:
         if not isinstance(activation_data[case_key], dict):
             continue
         if 'all_acts' not in activation_data[case_key]:
             continue
-        for i in range(activation_data[case_key]['all_acts'].shape[1]):
-            activation_data[case_key]['all_acts'][:,i] = color_hacks(activation_data[case_key]['all_acts'][:,i])
+        if verbose:
+            print("if necessary, will apply color hacks to", case_key)
+        #shape of activation_data[case_key]['all_acts'] is: sample pos act_type
+        for act_type_index in range(activation_data[case_key]['all_acts'].shape[-1]):#iterate over act_types
+            activation_data[case_key]['all_acts'][...,act_type_index] = color_hacks(
+                activation_data[case_key]['all_acts'][...,act_type_index],
+                verbose=verbose
+            )
+            if verbose and case_key==('gate-_in-', 'hook_pre', 'max') and act_type_index==0:
+                print(activation_data[case_key]['all_acts'].shape)#should be: sample pos act_type
+                print(activation_data[case_key]['all_acts'][0,:,0])
     return activation_data
 
 def activations_path(args, neuron_dir):

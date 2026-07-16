@@ -61,7 +61,13 @@ def update_pagelist(run_code, layer, neuron):
         with open(page_file, "w", encoding="utf-8") as write_file:
             dump(page_list, write_file, indent=4)
 
-def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron_dir, stop_tokens=None):
+def _vis_example(
+        i, indices, acts, dataset,
+        model:TransformerBridge,
+        key, neuron_dir,
+        stop_tokens=None,
+        verbose=False,
+    ):
     index = int(indices[i])
     #print(dataset[index]['input_ids'])#tensor of ints
     tokens = model.to_str_tokens(
@@ -72,12 +78,16 @@ def _vis_example(i, indices, acts, dataset, model:TransformerBridge, key, neuron
         #TODO option to show full example
         tokens = tokens[:stop_tokens[i]]
     relevant_acts = acts[i,:len(tokens),:]#batch, pos, act_type
+    if verbose:
+        print(relevant_acts[:,0])
     data_url = f"{'_'.join(key[:2])}_example_{i}.json"
     data_dict = {
         "tokens": tokens,
         "values": relevant_acts.tolist(),
         "labels": get_act_type_keys(key),
     }
+    if verbose:
+        print(data_dict["values"])
     with open(f"{neuron_dir}/{data_url}", "w", encoding="utf-8") as f:
         dump(data_dict, f, indent=4)
     #TODO source of dataset example
@@ -98,7 +108,6 @@ def _vis_examples(activation_data, dataset, model:TransformerBridge, neuron_dir)
         htmls.append(f'<details>\n<summary><h2>Prototypical activations for case {case}</h2></summary>')
         for act_type in VALUES_TO_SUMMARISE:
             key = (case, act_type, 'max')
-            #TODO the following condition apparently fails for cases other than gate+_in+
             if key in activation_data and 'all_acts' in activation_data[key] and activation_data[key]['values'][0]!=0:
                 htmls.append(f'<details>\n<summary><h3>Extreme {act_type} activations</h3></summary>')
                 for i in range(activation_data[key]['indices'].shape[0]):
@@ -115,7 +124,8 @@ def _vis_examples(activation_data, dataset, model:TransformerBridge, neuron_dir)
                             dataset=dataset,
                             model=model,
                             key=key,
-                            neuron_dir=neuron_dir
+                            neuron_dir=neuron_dir,
+                            #verbose = key==('gate-_in-', 'hook_pre', 'max') and i==0,
                             )
                     )
             htmls.append('</details>\n<hr>')

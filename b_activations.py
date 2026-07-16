@@ -448,6 +448,9 @@ def get_all_neuron_acts_on_dataset(
     random.seed(43)
     torch.manual_seed(43)
     for i, batch in tqdm(enumerate(batched_dataset)):
+        if i==0:
+            print(batch['text'][0])
+            print(model.to_string(batch['input_ids'][0]))
         if i<=number_of_batches_to_skip:
             continue
         batch_file = f"{path}/activation_cache/batch{i}"
@@ -575,13 +578,6 @@ if __name__=="__main__":
         dataset = dataset.select(range(33))
     dataset = dataset.with_format('torch')
     utils.add_properties(dataset)
-    # dataset = dataset.with_format(
-    #     type="torch",
-    #     columns=["input_ids", "attention_mask"],
-    #     pad=True,                # <-- enable automatic padding
-    #     padding_value=model.tokenizer.pad_token_type_id,         # match your model's pad token
-    #     pad_to_multiple_of=None
-    # )
 
     print('loading model...')
     print(torch.cuda.device_count(), "available GPUs")

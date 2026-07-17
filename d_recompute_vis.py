@@ -15,23 +15,37 @@ from datasets import load_dataset, load_from_disk, Dataset
 
 from transformer_lens.model_bridge import TransformerBridge
 
+from a_dataset import tokenize_dataset
 import recompute
 from c_neuron_vis import neuron_vis_full, update_pagelist
 import utils
 from utils import _move_to, load_data
 
 parser = ArgumentParser()
+#dataset arguments
 parser.add_argument('--dataset', default='dolma-small')
+parser.add_argument('--add_bos_token', type=bool, default=True,
+                    help="add bos token to every example")
+parser.add_argument('--max_length', type=int, default=1024,
+                    help="length of example token blocks")
+parser.add_argument('--return_overflowing_tokens', type=bool, default=False,
+                    help="""Make additional training examples with overflowing tokens.
+                    In this case it is currently not possible to keep the ids and metadata.""")
+parser.add_argument('--padding', type=bool, default=False,
+                    help="pad examples to args.max_length")
+#model arguments
 parser.add_argument('--model', default='allenai/OLMo-1B-hf')
 parser.add_argument(
     '--refactor_glu',
     action='store_true',
     help='whether to refactor the weights such that cos(w_gate,w_in)>=0'
 )
+#directories
 parser.add_argument('--datasets_dir', default='datasets')
 parser.add_argument('--results_dir', default='GLUScope-results')
 parser.add_argument('--site_dir', default='gluscope.github.io' if "WORK" in os.environ else 'docs')
 parser.add_argument('--save_to', default=None)
+#other
 parser.add_argument('--from_scratch', type=bool, default=True)
 parser.add_argument('--neurons',
     nargs='+',
@@ -87,6 +101,8 @@ else:
 
 text_dataset = load_data(args)
 assert isinstance(text_dataset, Dataset)
+if not args.model.startswith('allenai/OLMo-1B') and not args.model.startswith('allenai/OLMo-7B'):
+        text_dataset, _tokenizer = tokenize_dataset(args, text_dataset)
 
 need_to_refactor = summary_dict and args.refactor_glu and not refactored_already
 model = TransformerBridge.boot_transformers(

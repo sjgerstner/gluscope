@@ -1,7 +1,6 @@
 # GLUScope
 
-This is the code for the tool demonstrated at <https://sjgerstner.github.io/gluscope>.
-The website itself is in the ```docs/``` folder of this repository.
+This is the code for the tool demonstrated at <https://gluscope.github.io>.
 The goal is to visualise any given MLP neuron of a Transformer language model, especially via text examples that strongly activate it.
 
 Contrary to previous work, this tool is specifically adapted to gated activation functions (GLU variants) like SwiGLU, which are largely used in recent open-weights LLMs.
@@ -43,15 +42,15 @@ python b_activations.py --model allenai/OLMo-7B-0424-hf --refactor_glu
 
 The ```--refactor_glu``` flag causes a specific weight processing to happen when loading the model. See our paper for details (link upcoming).
 
-This script takes about five days to run on a single NVIDIA A100-SXM4-80GB GPU.
+On a single NVIDIA A100-SXM4-80GB GPU, the run time ranges from around 10 hours for a 2B model to around 20 hours for an 8B model.
 
 It saves the summary data (the same as in the dataset) as a dictionary of tensors called ```summary_refactored.pt``` (or just ```summary.pt``` if the ```--refactor_glu``` flag was not specified).
 You can optionally convert this to a Huggingface-compatible dataset with the script ```summary_dict_to_hf_dataset.py```.
 I'm excited if you upload such a dataset to the Huggingface hub!
 
-With the default options, the ```b_activations.py``` script additionally caches all the residual stream activations, which amounts to a whopping 25TB of data (which I didn't upload).
+With the option `--no_cache False` (not the default), the ```b_activations.py``` script additionally caches all the residual stream activations, which amounts to a whopping 25TB of data (which I didn't upload).
 This makes later recomputing faster.
-If you don't want this to happen, use the ```--no_cache``` flag.
+If you don't want this to happen, use the ```--no_cache True``` flag (default).
 To be precise, I cache the direct inputs to the MLP, i.e. after pre-LayerNorm. My code assumes a pre-norm architecture, so otherwise please tweak the code or use the ```--no_cache``` flag.
 
 The script allows a lot of other options, see the argparse part of the code.
@@ -71,8 +70,4 @@ When not using the cache (because it is not available, or if the ```--from_scrat
 
 Again, other options are possible, see the argparse part of the code.
 
-If you want to contribute a neuron page:
-
-* fork this repo
-* run the ```d_recompute_vis.py``` with the appropriate options as described above
-* open a pull request.
+If you want to contribute a neuron page, open a pull request to <https://github.com/gluscope/gluscope.github.io>

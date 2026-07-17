@@ -71,17 +71,40 @@ def _recompute_from_scratch(
         f"blocks.{layer}.mlp.{hook}"
         for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']
     ]
-    _logits, raw_cache = model.run_with_cache(
-        input_ids,
-        attention_mask=attention_mask,
-        names_filter=names_filter,
-        return_type=None,
-        stop_at_layer=layer+1,
-    )
-    intermediate = {
-        hook: raw_cache[f"blocks.{layer}.mlp.{hook}"][...,neuron]
-        for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']
-    }
+    try:
+        _logits, raw_cache = model.run_with_cache(
+            input_ids,
+            attention_mask=attention_mask,
+            names_filter=names_filter,
+            return_type=None,
+            stop_at_layer=layer+1,
+        )
+        del _logits
+        intermediate = {
+            hook: raw_cache[f"blocks.{layer}.mlp.{hook}"][...,neuron]
+            for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']
+        }
+        del raw_cache
+        torch.cuda.empty_cache()
+    except torch.cuda.OutOfMemoryError:
+        intermediate = {
+            hook: torch.zeros_like(input_ids, dtype=torch.float)
+            for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']
+        }
+        for i, index_within_dataset in enumerate(indices_within_dataset):
+            _logits, raw_cache = model.run_with_cache(
+                input_ids[i],
+                attention_mask=attention_mask[i:i+1],
+                names_filter=names_filter,
+                return_type=None,
+                stop_at_layer=layer+1,
+            )
+            del _logits
+            for hook in ['hook_pre', 'hook_pre_linear', 'hook_post']:
+                intermediate[hook][i] = raw_cache[f"blocks.{layer}.mlp.{hook}"][...,neuron]
+            del raw_cache
+            torch.cuda.empty_cache()
+    #print(intermediate['hook_pre'].shape, intermediate['hook_pre'].dtype, intermediate['hook_pre'][0,0])
     intermediate['swish'] = model.actfn(intermediate['hook_pre'])
 
     return intermediate

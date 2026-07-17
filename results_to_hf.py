@@ -21,7 +21,8 @@ def reformat_summary_old(
     for key,value in summary_dict.items():
         str_key = "_".join(key).replace("sum", "mean")
         if key[-1]!='max':
-            new_dict[str_key] = rearrange(value, 'l n -> (l n)').detach().cpu().numpy()
+            pattern = 'l n -> (l n)' if value.ndim==2 else '1 l n -> (l n)'
+            new_dict[str_key] = rearrange(value, pattern).detach().cpu().numpy()
         else:
             new_dict[f'{str_key}_values'] = rearrange(
                 value['values'], 'topk l n -> (l n) topk'
@@ -118,9 +119,16 @@ if __name__=='__main__':
         name = 'sampled-activations'
     else:
         raise NotImplementedError("File name (--file) should either contain 'summary' or 'sample'")
+    root_path = (
+        os.path.join(
+            os.environ["WORK"],
+            "GLUScope-results"
+        )
+        if "WORK" in os.environ
+        else "./results"
+    )
     model_path = os.path.join(
-        os.environ["WORK"] if "WORK" in os.environ else "."
-        "results",
+        root_path,
         args.model,
     )
     local_dataset_path=os.path.join(
@@ -132,7 +140,7 @@ if __name__=='__main__':
         dataset = datasets.load_from_disk(local_dataset_path)
     else:
         print('loading original dict...')
-        my_dict = torch.load(os.path.join(model_path, args.file))
+        my_dict = torch.load(os.path.join(model_path, args.file), map_location='cpu')
         if 'summary' in args.file:
             print('reformatting the dict...')
             if not any(key[1].startswith('blocks') for key in my_dict):
@@ -147,10 +155,11 @@ if __name__=='__main__':
                 sample_generator, gen_kwargs={"sample_dict":my_dict}
             )
 
+    print("saving locally...")
+    dataset.save_to_disk(local_dataset_path)
     if args.push_to_hub:
+        print("pushing to hub...")
         username = whoami(token=os.environ['HF_TOKEN'])['name']
         print(username)
         login(token=os.environ['HF_TOKEN'])
         dataset.push_to_hub(f"{username}/{args.model}_{name}")
-    else:
-        dataset.save_to_disk(local_dataset_path)

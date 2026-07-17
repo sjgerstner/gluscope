@@ -76,7 +76,7 @@ if refactored_already:= os.path.exists(f"{SUMMARY_FILE}.pt") or os.path.exists(f
 else:
     MY_FILE = f'{SAVE_PATH}/summary'
 if os.path.exists(f"{MY_FILE}.pt"):
-    summary_dict = torch.load(f"{MY_FILE}.pt")
+    summary_dict = torch.load(f"{MY_FILE}.pt", map_location='cuda')
 elif os.path.exists(f"{MY_FILE}.pickle"):
     with open(f"{MY_FILE}.pickle", 'rb') as read_file:
         summary_dict = _move_to(pickle.load(read_file), 'cuda')
@@ -89,15 +89,6 @@ else:
         assert args.refactor_glu
         summary_dataset = load_dataset('sjgerstner/OLMo-7B-0424-hf_neuron-activations')['train']
     assert isinstance(summary_dataset, Dataset)
-# if args.test:
-#     #print(f"summary_dict: {summary_dict.keys()}")
-#     for key,value in summary_dict.items():
-#         if isinstance(value, torch.Tensor):
-#             print(f'{key}: {value[...,0,0]}')
-#         elif isinstance(value, dict):
-#             print(f'{key}:')
-#             for key1,value1 in value.items():
-#                 print(f'> {key1}: {value1[...,0,0]}')
 
 text_dataset = load_data(args)
 assert isinstance(text_dataset, Dataset)
@@ -109,9 +100,15 @@ model = TransformerBridge.boot_transformers(
     args.model,
     device='cpu' if need_to_refactor else 'cuda',
 )
-model.enable_compatibility_mode(
-    refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
-)
+try:
+    model.enable_compatibility_mode(
+        refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
+        fold_ln=False, center_writing_weights=False, center_unembed=False, fold_value_biases=False,
+    )
+except torch.cuda.OutOfMemoryError:
+    model.enable_compatibility_mode(process_weights=False)
+    sign_to_adapt=utils.compute_sign_to_adapt(model)
+    model = utils.refactor_glu_model(model=model, sign_to_adapt=sign_to_adapt)
 utils.add_actfn(model)
 #assert model.W_gate is not None
 
@@ -120,18 +117,16 @@ N_LAYERS, N_NEURONS = model.cfg.n_layers, model.cfg.d_mlp
 
 if need_to_refactor:
     #first we detect which neurons to refactor and then we update the model
-    sign_to_adapt = torch.sign(einops.einsum(
-        model.W_in.detach().cuda(), model.W_gate.detach().cuda(), "l d n, l d n -> l n"
-    ))
+    sign_to_adapt=utils.compute_sign_to_adapt(model)
     if "summary_mean" in summary_dict:#legacy
         summary_dict = utils.refactor_glu_old(summary_dict, sign_to_adapt)
     else:
         summary_dict = utils.refactor_glu(summary_dict, sign_to_adapt)
     torch.save(summary_dict, f"{SUMMARY_FILE}.pt")
-    del model
-    model = TransformerBridge.boot_transformers(args.model, device='cuda')
-    model.enable_compatibility_mode(refactor_glu=True)
+    model = model.cuda()
+    model.enable_compatibility_mode(no_processing=True)
     utils.add_actfn(model)
+    model = utils.refactor_glu_model(model=model, sign_to_adapt=sign_to_adapt)
 else:
     sign_to_adapt = torch.ones(size=(N_LAYERS, N_NEURONS), dtype=torch.int)
 

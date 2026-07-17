@@ -4,6 +4,8 @@ from os.path import exists, join
 import torch
 from torch import is_tensor
 
+import einops
+
 from transformers.activations import ACT2FN
 
 from transformer_lens.model_bridge import TransformerBridge
@@ -73,6 +75,18 @@ def detect_cases(gate_values, in_values, keys=None, to_device='cpu'):
     if 'gate-_in-' in keys:
         bins['gate-_in-'] = ((gate_values<0)*(in_values<0)).to(to_device)
     return bins
+
+def compute_sign_to_adapt(model:TransformerBridge)->torch.Tensor:
+    W_in = model.W_in.detach().cuda()
+    W_gate = model.W_gate.detach().cuda()
+    sign_to_adapt = torch.sign(
+        einops.einsum(
+            W_in, W_gate,
+            "l d n, l d n -> l n" if W_in.shape[1]==model.cfg.d_model else "l n d, l n d -> l n"
+        )
+    )
+    del W_in, W_gate
+    return sign_to_adapt
 
 def refactor_glu_old(summary_dict, sign_to_adapt):
     """
@@ -161,7 +175,9 @@ def refactor_glu(summary_dict, sign_to_adapt):
                 -summary_dict[(_refactor_case(key[0]), 'freq')]
             )
         elif key[-1]=='sum':
-            layer = int(key[1].split('.'))
+            layer=None
+            if '.' in key[1]:
+                layer = int(key[1].split('.')[1])
             new_dict[key] = torch.where(
                 sign_to_adapt[layer,:]==1,
                 summary_dict[key],
@@ -169,20 +185,38 @@ def refactor_glu(summary_dict, sign_to_adapt):
             )
         else:
             assert key[-1]=='max', f"last part of key must be 'freq', 'sum', or 'max', but key is {key}"
-            layer = int(key[1].split('.'))
+            #print(key)
+            layer=None
+            if '.' in key[1]:
+                layer = int(key[1].split('.')[1])
             new_dict[key] = {
                 "values": torch.where(
-                    sign_to_adapt[layer,:]==1,
+                    (sign_to_adapt[layer,:]==1) if layer is not None else (sign_to_adapt==1),
                     summary_dict[key]["values"],
-                    -summary_dict[(_refactor_case(key[0]), key[1], key[2])]
+                    -(summary_dict[(_refactor_case(key[0]), key[1], key[2])]["values"])
                 ),
                 "indices": torch.where(
-                    sign_to_adapt[layer,:]==1,
+                    (sign_to_adapt[layer,:]==1) if layer is not None else (sign_to_adapt==1),
                     summary_dict[key]["indices"],
-                    -summary_dict[(_refactor_case(key[0]), key[1], key[2])]
+                    summary_dict[(_refactor_case(key[0]), key[1], key[2])]["indices"]
                 )
             }
     return new_dict
+
+def refactor_glu_model(
+        model:TransformerBridge, sign_to_adapt:torch.Tensor
+    )->TransformerBridge:
+    dn_in = model.blocks[0].mlp.W_in.shape[0]==model.cfg.d_model
+    dn_out = model.blocks[0].mlp.W_out.shape[0]==model.cfg.d_model
+    for layer in range(model.cfg.n_layers):
+        model.blocks[0].mlp.W_in *= einops.rearrange(
+            sign_to_adapt[layer],
+            "n -> 1 n" if dn_in else "n -> n 1"
+        )
+        model.blocks[0].mlp.W_out *= einops.rearrange(
+            sign_to_adapt[layer],
+            "n -> 1 n" if dn_out else "n -> n 1"
+        )
 
 def adapt_activations(dict_all):
     #TODO adapt to new format

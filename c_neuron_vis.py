@@ -171,7 +171,7 @@ def _vis_stats(activation_data, actfn):
             <b>{act_type}</b>:<br>
             Max: <b>{maxima[(case, act_type)]:.2f}</b>;<br>
             Min: <b>{minima[(case, act_type)]:.2f}</b>;<br>
-            Avg: <b>{avgs[case]:.2f}</b>.
+            Avg: <b>{avgs[case].item():.2f}</b>.
             </td>
             """
             for case in CASES

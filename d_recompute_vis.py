@@ -6,7 +6,6 @@ import os
 import pickle
 
 import torch
-import einops
 
 #make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
 if "SLURM_JOBID" in os.environ:

@@ -207,16 +207,23 @@ def refactor_glu_model(
         model:TransformerBridge, sign_to_adapt:torch.Tensor
     )->TransformerBridge:
     dn_in = model.blocks[0].mlp.W_in.shape[0]==model.cfg.d_model
-    dn_out = model.blocks[0].mlp.W_out.shape[0]==model.cfg.d_model
+    dn_out = model.blocks[0].mlp.out.weight.shape[0]==model.cfg.d_model
     for layer in range(model.cfg.n_layers):
-        model.blocks[0].mlp.W_in *= einops.rearrange(
+        model.blocks[layer].mlp.W_in *= einops.rearrange(
             sign_to_adapt[layer],
             "n -> 1 n" if dn_in else "n -> n 1"
         )
-        model.blocks[0].mlp.W_out *= einops.rearrange(
+        model.blocks[layer].mlp.out.weight *= einops.rearrange(
             sign_to_adapt[layer],
             "n -> 1 n" if dn_out else "n -> n 1"
         )
+        if layer==0:
+            assert torch.all(
+                einops.einsum(
+                    model.blocks[0].mlp.W_in, model.blocks[0].mlp.W_out,
+                    f"{'d n' if dn_in else 'n d'}, {'d n' if dn_out else 'n d'} -> n"
+                ) >= 0
+            )
 
 def adapt_activations(dict_all):
     #TODO adapt to new format

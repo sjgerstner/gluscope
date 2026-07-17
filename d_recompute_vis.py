@@ -100,15 +100,18 @@ model = TransformerBridge.boot_transformers(
     args.model,
     device='cpu' if need_to_refactor else 'cuda',
 )
-try:
-    model.enable_compatibility_mode(
-        refactor_glu=args.refactor_glu and not need_to_refactor,#not yet refactor_glu=args.refactor_glu
-        fold_ln=False, center_writing_weights=False, center_unembed=False, fold_value_biases=False,
-    )
-except torch.cuda.OutOfMemoryError:
-    model.enable_compatibility_mode(process_weights=False)
-    sign_to_adapt=utils.compute_sign_to_adapt(model)
-    model = utils.refactor_glu_model(model=model, sign_to_adapt=sign_to_adapt)
+if not args.refactor_glu or need_to_refactor:
+    model.enable_compatibility_mode(no_processing=True)
+else:
+    try:
+        model.enable_compatibility_mode(
+            refactor_glu=True,
+            fold_ln=False, center_writing_weights=False, center_unembed=False, fold_value_biases=False,
+        )
+    except torch.cuda.OutOfMemoryError:
+        model.enable_compatibility_mode(no_processing=True)
+        sign_to_adapt=utils.compute_sign_to_adapt(model)
+        model = utils.refactor_glu_model(model=model, sign_to_adapt=sign_to_adapt)
 utils.add_actfn(model)
 #assert model.W_gate is not None
 

@@ -10,7 +10,7 @@ import torch
 #make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
 if "SLURM_JOBID" in os.environ:
     os.environ["HF_HUB_OFFLINE"]='1'
-from datasets import load_dataset, load_from_disk, Dataset
+import datasets
 
 from transformer_lens.model_bridge import TransformerBridge
 
@@ -81,16 +81,18 @@ elif os.path.exists(f"{MY_FILE}.pickle"):
         summary_dict = _move_to(pickle.load(read_file), 'cuda')
 else:
     if os.path.exists(f'{SAVE_PATH}/activation_dataset'):
-        summary_dataset = load_from_disk(f'{SAVE_PATH}/activation_dataset')
+        summary_dataset = datasets.load_from_disk(f'{SAVE_PATH}/activation_dataset')
     else:
         assert args.dataset=='dolma-small'
         assert args.model=='allenai/OLMo-7B-0424-hf'
         assert args.refactor_glu
-        summary_dataset = load_dataset('sjgerstner/OLMo-7B-0424-hf_neuron-activations')['train']
-    assert isinstance(summary_dataset, Dataset)
+        print("HF_HUB_OFFLINE =", os.environ["HF_HUB_OFFLINE"])
+        #if you get an offline error in the following line, just run this line once while online, then it should also work offline
+        summary_dataset = datasets.load_dataset('sjgerstner/OLMo-7B-0424-hf_neuron-activations')['train']
+    assert isinstance(summary_dataset, datasets.Dataset)
 
 text_dataset = load_data(args)
-assert isinstance(text_dataset, Dataset)
+assert isinstance(text_dataset, datasets.Dataset)
 if not args.model.startswith('allenai/OLMo-1B') and not args.model.startswith('allenai/OLMo-7B'):
         text_dataset, _tokenizer = tokenize_dataset(args, text_dataset)
 

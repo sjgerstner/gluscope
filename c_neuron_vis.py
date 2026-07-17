@@ -2,7 +2,7 @@
 from json import load, dump
 import os
 
-from torch import allclose, zeros_like, tensor
+from torch import allclose, zeros_like, Tensor
 #from circuitsvis.tokens import colored_tokens_multi
 
 #make sure HF_HUB_CACHE is set to 1 if necessary, before loading datasets
@@ -166,12 +166,16 @@ def _vis_stats(activation_data, actfn):
             )
             for case in CASES
         }
+        for case, avg in avgs.items():
+            if isinstance(avg, Tensor):
+                assert avg.numel()==1, f"avg is not a singleton, but has shape {avg.shape}"
+                avgs[case] = avg.item()
         htmls.extend(
             [f"""<td>
             <b>{act_type}</b>:<br>
             Max: <b>{maxima[(case, act_type)]:.2f}</b>;<br>
             Min: <b>{minima[(case, act_type)]:.2f}</b>;<br>
-            Avg: <b>{avgs[case].item():.2f}</b>.
+            Avg: <b>{avgs[case]:.2f}</b>.
             </td>
             """
             for case in CASES

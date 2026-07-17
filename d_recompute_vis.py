@@ -50,7 +50,7 @@ parser.add_argument('--from_scratch', type=bool, default=True)
 parser.add_argument('--neurons',
     nargs='+',
     default=[],
-    help='one or several neurons denoted as layer.neuron, or "all"',
+    help='one or several neurons denoted as layer.neuron, or "all", or "zeros" (neuron 0 from each layer)',
 )
 parser.add_argument('--test', action='store_true')
 args = parser.parse_args()
@@ -135,8 +135,10 @@ if need_to_refactor:
 else:
     sign_to_adapt = torch.ones(size=(N_LAYERS, N_NEURONS), dtype=torch.int)
 
-if args.neurons=='all':
+if args.neurons==['all']:
     layer_neuron_list = [range(N_NEURONS) for _layer in range(N_LAYERS)]
+elif args.neurons==['zeros']:
+    layer_neuron_list = [[0] for _layer in range(N_LAYERS)]
 elif args.neurons:
     layer_neuron_list = [[] for _layer in range(N_LAYERS)]
     for ln_str in args.neurons:
@@ -149,16 +151,6 @@ if summary_dict:
     maxmin_keys = [key for key in summary_dict.keys() if key[-1] in ['max','min']]
 else:
     maxmin_keys = []#dummy
-
-if args.neurons=='all':
-    layer_neuron_list = [range(N_NEURONS) for _layer in range(N_LAYERS)]
-elif args.neurons:
-    layer_neuron_list = [[] for layer in range(N_LAYERS)]
-    for ln_str in args.neurons:
-        layer, neuron = tuple(int(n) for n in ln_str.split('.'))
-        layer_neuron_list[layer].append(neuron)
-elif args.test:
-    layer_neuron_list = [[0]]
 
 for layer,neuron_list in enumerate(layer_neuron_list):
     print(f'processing layer {layer}...')
@@ -173,7 +165,7 @@ for layer,neuron_list in enumerate(layer_neuron_list):
             os.mkdir(neuron_vis_dir)
 
         #recomputing neuron activations on max and min examples
-        print('>> gathering/recomputing data from cache...')
+        print('>> gathering/recomputing data...')
         kwargs = {
             "neuron_dir": neuron_vis_dir,
             "model": model, "layer": layer, "neuron": neuron,

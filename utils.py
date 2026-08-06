@@ -172,7 +172,7 @@ def refactor_glu(summary_dict, sign_to_adapt):
             new_dict[key] = torch.where(
                 sign_to_adapt==1,
                 summary_dict[key],
-                -summary_dict[(_refactor_case(key[0]), 'freq')]
+                summary_dict[(_refactor_case(key[0]), 'freq')]
             )
         elif key[-1]=='sum':
             layer=None

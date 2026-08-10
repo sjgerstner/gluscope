@@ -4,13 +4,13 @@ using given tokenizer:
 Make tokenized blocks of fixed length.
 """
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 import os
 
 from transformers import AutoTokenizer
 import datasets
 
-def tokenize_dataset(args, dataset):
+def tokenize_dataset(args:Namespace, dataset:datasets.Dataset):
     """Tokenize the dataset.
     Args:
         args (Namespace): should have the following attributes:

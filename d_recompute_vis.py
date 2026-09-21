@@ -60,7 +60,7 @@ RUN_CODE = utils.get_run_code(args)
 SAVE_PATH = utils.make_save_path(args.results_dir, RUN_CODE)
 VIS_PATH = utils.make_save_path(args.site_dir, RUN_CODE)
 with open("html_boilerplate/head.html", "r", encoding="utf-8") as read_file:
-    HEAD_AND_TITLE = read_file.read()+f"\n<body>\n<h1>Model: <b>{args.model}</b></h1>\n"
+    HEAD_AND_TITLE = read_file.read()+f"\n<h1>Model: <b>{args.model}</b></h1>\n"
 with open("html_boilerplate/script.html", "r", encoding="utf-8") as read_file:
     TAIL = read_file.read()+"\n</body>\n</html>\n"
 
